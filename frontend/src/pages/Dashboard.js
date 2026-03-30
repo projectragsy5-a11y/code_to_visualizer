@@ -1,192 +1,130 @@
-import React, { useState, useCallback } from 'react';
-import {
-  ReactFlow,
-  Background,
-  BackgroundVariant,
-  Controls,
-  MiniMap,
-  addEdge,
-  useNodesState,
-  useEdgesState,
-} from '@xyflow/react';
-import '@xyflow/react/dist/style.css';
+import React, { useState } from 'react';
 import axios from 'axios';
 
-const PLACEHOLDER_NODES = [
-  {
-    id: 'placeholder',
-    position: { x: 160, y: 120 },
-    data: {
-      label: (
-        <div style={{ textAlign: 'center', padding: '8px 4px' }}>
-          <div style={{ fontSize: '26px', marginBottom: '8px', lineHeight: 1 }}>🐍</div>
-          <div style={{ fontSize: '13px', fontWeight: 600, color: '#38bdf8', marginBottom: '4px' }}>
-            Ready to Visualize
-          </div>
-          <div style={{ fontSize: '11px', color: '#64748b', lineHeight: 1.5 }}>
-            Write Python code on the left<br />then click ▶ Run & Visualize
-          </div>
-        </div>
-      ),
-    },
-    style: {
-      background: '#1e293b',
-      border: '1.5px dashed #334155',
-      borderRadius: '12px',
-      padding: '8px',
-      minWidth: '200px',
-    },
-  },
-];
 
-const DEFAULT_CODE = `# Welcome to Code Visualizer Pro!
-def check_number(n):
-    if n > 0:
-        return "Positive"
-    else:
-        return "Zero or Negative"
-
-print(check_number(10))`;
-
+// Note: I've kept your team's CSS styles in the bottom of this file
 const Dashboard = () => {
-  const [code, setCode] = useState(DEFAULT_CODE);
+  const [code, setCode] = useState('print("Hello NTTF!")');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [status, setStatus] = useState('System Ready');
+  const [result, setResult] = useState(null);
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(PLACEHOLDER_NODES);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
-
-  const onConnect = useCallback(
-    (params) => setEdges((eds) => addEdge(params, eds)),
-    [setEdges]
-  );
-
-  const handleKeyDown = (e) => {
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      const { selectionStart, selectionEnd, value } = e.target;
-      const next = value.slice(0, selectionStart) + '    ' + value.slice(selectionEnd);
-      setCode(next);
-      setTimeout(() => {
-        e.target.selectionStart = e.target.selectionEnd = selectionStart + 4;
-      }, 0);
-    }
-  };
-
-  const handleVisualize = async () => {
-    if (!code.trim()) {
-      setError('Please write some Python code first.');
-      return;
-    }
+  const handleRunCode = async () => {
     setLoading(true);
-    setError('');
-    setStatus('Generating Visualization...');
-
     try {
-      // Note: Changed to 127.0.0.1 to match standard local backend access
-      const response = await axios.post('http://127.0.0.1:8000/visualize', { code });
-      const { nodes: n, edges: e } = response.data;
-
-      setNodes(n && n.length > 0 ? n : PLACEHOLDER_NODES);
-      setEdges(e || []);
-      setStatus('Visualization Complete');
-    } catch (err) {
-      const msg = err.response?.data?.detail || 'Check backend connection.';
-      setError(msg);
-      setStatus('Error Occurred');
+      // This talks to your Python Backend (main.py)
+      const response = await axios.post('http://127.0.0.1:8000/visualize', {
+        code: code
+      });
+      setResult(response.data);
+    } catch (error) {
+      console.error("Backend Error:", error);
+      alert("Make sure your Python backend is running!");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', background: '#0f172a', color: '#f1f5f9', overflow: 'hidden' }}>
-      
-      {/* Top Navbar */}
-      <nav style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', height: '55px', background: '#1e293b', borderBottom: '1px solid #334155' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{ background: '#3b82f6', color: 'white', padding: '4px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold' }}>PRO</div>
-          <span style={{ fontWeight: 700, fontSize: '18px', letterSpacing: '-0.5px' }}>Code<span style={{ color: '#38bdf8' }}>Visualizer</span></span>
-        </div>
-        
-        {/* Project Context - "Focus Mode" Indicator */}
-        <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
-          <div style={{ fontSize: '11px', color: '#94a3b8', border: '1px solid #334155', padding: '4px 10px', borderRadius: '20px' }}>
-             <span style={{ color: '#10b981' }}>●</span> Focus Mode Active
+    <div style={styles.pageBackground}>
+      {/* Navbar */}
+      <nav style={styles.dashNav}>
+        <div style={styles.dashNavLeft}>
+          <div style={styles.dashWordmarkIcon}>
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="black" strokeWidth="2">
+              <path d="M4 6h6M4 10h4M4 14h8M14 4l6 8-6 8" />
+            </svg>
           </div>
-          <div style={{ fontSize: '12px', color: '#64748b', fontWeight: 500 }}>NTTF Final Year Project</div>
+          <span style={styles.logoText}>Ragsy — Code to Visualizer</span>
+        </div>
+        <div style={styles.dashNavRight}>
+          <span style={styles.projectBadge}>NTTF FINAL YEAR PROJECT</span>
         </div>
       </nav>
 
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* Left: Editor Area */}
-        <div style={{ width: '35%', minWidth: '350px', borderRight: '1px solid #1e293b', display: 'flex', flexDirection: 'column', background: '#0f172a' }}>
-          <div style={{ padding: '12px 15px', background: '#131c2f', borderBottom: '1px solid #1e293b', display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: '12px', color: '#94a3b8', fontFamily: 'monospace' }}>editor.py</span>
-            <span style={{ fontSize: '12px', color: '#475569' }}>Lines: {code.split('\n').length}</span>
+      {/* Main Content Area */}
+      <div style={styles.mainLayout}>
+        {/* Left: Code Editor */}
+        <div style={styles.editorPanel}>
+          <div style={styles.panelHeader}>
+            <span style={styles.panelTitle}>
+              <div style={styles.dot}></div> PYTHON SOURCE
+            </span>
           </div>
-          <textarea
+          <textarea 
+            style={styles.codeEditor}
             value={code}
             onChange={(e) => setCode(e.target.value)}
-            onKeyDown={handleKeyDown}
-            spellCheck={false}
-            style={{ flex: 1, padding: '20px', background: 'transparent', color: '#38bdf8', border: 'none', outline: 'none', resize: 'none', fontFamily: '"Fira Code", monospace', fontSize: '14px', lineHeight: '1.7' }}
+            placeholder="Enter your Python code here..."
           />
-          
-          <div style={{ padding: '20px', borderTop: '1px solid #1e293b', background: '#0f172a' }}>
-            {error && (
-              <div style={{ color: '#ef4444', marginBottom: '10px', fontSize: '12px', background: 'rgba(239, 68, 68, 0.1)', padding: '8px', borderRadius: '4px' }}>
-                ⚠ {error}
-              </div>
-            )}
+          <div style={styles.runBar}>
             <button 
-              onClick={handleVisualize} 
+              style={loading ? {...styles.btnRun, opacity: 0.5} : styles.btnRun} 
+              onClick={handleRunCode}
               disabled={loading}
-              style={{ 
-                width: '100%', 
-                padding: '14px', 
-                background: loading ? '#334155' : '#3b82f6', 
-                color: 'white', 
-                border: 'none', 
-                borderRadius: '8px', 
-                cursor: loading ? 'not-allowed' : 'pointer', 
-                fontWeight: 600,
-                transition: 'all 0.2s'
-              }}
             >
-              {loading ? 'Processing...' : '▶ Run & Visualize'}
+              {loading ? "PROCESSING..." : "▶ RUN & VISUALIZE"}
             </button>
           </div>
         </div>
 
-        {/* Right: Visualization Canvas */}
-        <div style={{ flex: 1, position: 'relative', background: '#0b1120' }}>
-          <ReactFlow 
-            nodes={nodes} 
-            edges={edges} 
-            onNodesChange={onNodesChange} 
-            onEdgesChange={onEdgesChange} 
-            onConnect={onConnect} 
-            fitView
-          >
-            <Background variant={BackgroundVariant.Dots} gap={25} color="#1e293b" />
-            <Controls style={{ background: '#1e293b', border: '1px solid #334155', color: 'white' }} />
-            <MiniMap 
-              style={{ background: '#0f172a', border: '1px solid #334155' }} 
-              maskColor="rgba(15, 23, 42, 0.8)" 
-              nodeColor="#1e293b"
-            />
-          </ReactFlow>
-          
-          {/* Bottom Status Bar */}
-          <div style={{ position: 'absolute', bottom: '15px', right: '15px', background: '#1e293b', padding: '5px 15px', borderRadius: '20px', fontSize: '11px', border: '1px solid #334155', pointerEvents: 'none', zIndex: 10 }}>
-            Status: <span style={{ color: loading ? '#fbbf24' : '#10b981' }}>{status}</span>
+        {/* Right: Visualization Output */}
+        <div style={styles.outputPanel}>
+          <div style={styles.panelHeader}>
+            <span style={styles.panelTitle}>ARCHITECTURE PREVIEW</span>
+          </div>
+          <div style={styles.outputContent}>
+            {!result && !loading && (
+              <div style={styles.emptyState}>
+                <h3>Ready for Input</h3>
+                <p>Enter code on the left to generate the architecture diagram.</p>
+              </div>
+            )}
+            
+            {loading && <div style={styles.loader}>Generating Flowchart...</div>}
+
+            {result && (
+              <div style={styles.resultArea}>
+                <div style={styles.diagramBox}>
+                  {/* This is where the Python-generated Flowchart goes */}
+                  <img 
+                    src={`data:image/png;base64,${result.image}`} 
+                    alt="Architecture Diagram" 
+                    style={{maxWidth: '100%'}}
+                  />
+                </div>
+                <div style={styles.explanationCard}>
+                  <h4>Analysis Report:</h4>
+                  <p>{result.explanation || "No explanation generated."}</p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
     </div>
   );
+};
+
+// Internal CSS to keep the "Team Look" (Simplified for React)
+const styles = {
+  pageBackground: { backgroundColor: '#2d2f3a', height: '100vh', display: 'flex', flexDirection: 'column', color: 'white', fontFamily: 'DM Sans, sans-serif' },
+  dashNav: { height: '64px', backgroundColor: '#4466a5', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 32px', borderBottom: '1px solid #1E2530' },
+  logoText: { fontFamily: 'Syne, sans-serif', fontWeight: '800', fontSize: '18px' },
+  projectBadge: { fontSize: '10px', backgroundColor: 'rgba(0,200,168,.12)', color: '#00C8A8', padding: '4px 12px', borderRadius: '20px', border: '1px solid #00C8A8' },
+  mainLayout: { flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', overflow: 'hidden' },
+  editorPanel: { borderRight: '1px solid #1E2530', display: 'flex', flexDirection: 'column' },
+  panelHeader: { padding: '16px 24px', backgroundColor: '#3A4658', display: 'flex', alignItems: 'center', borderBottom: '1px solid #1E2530' },
+  panelTitle: { fontSize: '11px', letterSpacing: '.12em', color: '#8FA3BA', display: 'flex', alignItems: 'center', gap: '8px' },
+  dot: { width: '8px', height: '8px', backgroundColor: '#00C8A8', borderRadius: '50%' },
+  codeEditor: { flex: 1, backgroundColor: '#181D24', color: '#A8D8B8', fontFamily: 'DM Mono, monospace', padding: '24px', border: 'none', outline: 'none', resize: 'none', fontSize: '14px' },
+  runBar: { padding: '14px 24px', backgroundColor: '#4466a5' },
+  btnRun: { backgroundColor: '#00C8A8', color: '#181D24', border: 'none', padding: '10px 20px', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', width: '100%' },
+  outputPanel: { display: 'flex', flexDirection: 'column', backgroundColor: '#181D24' },
+  outputContent: { padding: '24px', overflowY: 'auto', flex: 1 },
+  emptyState: { textAlign: 'center', marginTop: '100px', color: '#5A6880' },
+  loader: { color: '#00C8A8', textAlign: 'center', marginTop: '50px' },
+  explanationCard: { marginTop: '20px', padding: '15px', backgroundColor: '#2d2f3a', borderRadius: '8px', border: '1px solid #3A4658' },
+  diagramBox: { backgroundColor: 'white', padding: '10px', borderRadius: '8px' }
 };
 
 export default Dashboard;

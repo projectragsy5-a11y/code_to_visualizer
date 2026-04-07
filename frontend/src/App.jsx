@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import ReactFlow, {
   Background, Controls, MiniMap,
   useNodesState, useEdgesState,
+  Handle, Position,
 } from "reactflow";
 import "reactflow/dist/style.css";
 
@@ -607,10 +608,13 @@ function RegisterView({ onSwitch, onSuccess, toast }) {
         body: JSON.stringify({ username: username.trim(), mobile_no: fullMobile, password }),
       });
       setMobileNo(fullMobile);
-      setDevOtp(data.otp_code || "");   // shown in dev mode
+      // Only show dev OTP if Twilio did NOT send a real SMS
+      setDevOtp(data.sms_sent ? "" : (data.otp_code || ""));
       startTimer(data.expires_in || 300);
       setStep(3);
-      toast("ok", "OTP sent to your mobile!");
+      toast("ok", data.sms_sent
+        ? `OTP sent to ${fullMobile} via SMS!`
+        : "OTP generated (check server console or dev box below)");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -732,12 +736,36 @@ function RegisterView({ onSwitch, onSuccess, toast }) {
       {/* STEP 3 — OTP verify */}
       {step === 3 && (
         <form onSubmit={handleVerify}>
-          <p className="otp-hint">Enter the 6-digit code sent to<br /><strong style={{ color: "var(--white)" }}>{mobileNo}</strong></p>
+          {/* SMS sent confirmation */}
+          <div style={{
+            textAlign: "center", marginBottom: 16, padding: "12px 16px",
+            background: devOtp ? "rgba(240,165,0,.07)" : "rgba(0,200,168,.07)",
+            border: `1px solid ${devOtp ? "rgba(240,165,0,.3)" : "rgba(0,200,168,.3)"}`,
+            borderRadius: 8,
+          }}>
+            <div style={{ fontSize: 20, marginBottom: 6 }}>{devOtp ? "🔧" : "📱"}</div>
+            <p style={{ fontSize: 13, color: "var(--silver)", lineHeight: 1.5 }}>
+              {devOtp
+                ? <>Dev mode — OTP not sent via SMS.<br/>Use the code below:</>
+                : <>OTP sent via SMS to<br/><strong style={{ color: "var(--white)" }}>{mobileNo}</strong></>
+              }
+            </p>
+          </div>
+
+          {/* Dev OTP box — only shown when Twilio not configured */}
           {devOtp && (
-            <div style={{ textAlign: "center", marginTop: 10, fontFamily: "var(--mono)", fontSize: 11, color: "var(--gold)", background: "rgba(240,165,0,.08)", border: "1px solid rgba(240,165,0,.25)", borderRadius: 6, padding: "6px 12px" }}>
-              DEV OTP: <strong>{devOtp}</strong>
+            <div style={{
+              textAlign: "center", marginBottom: 14,
+              fontFamily: "var(--mono)", fontSize: 28, fontWeight: 700,
+              color: "var(--gold)", letterSpacing: "0.3em",
+              background: "rgba(240,165,0,.08)", border: "1px solid rgba(240,165,0,.25)",
+              borderRadius: 8, padding: "14px 12px",
+            }}>
+              {devOtp}
             </div>
           )}
+
+          <p className="otp-hint" style={{ marginBottom: 4 }}>Enter the 6-digit code</p>
           <div className="otp-row">
             {otp.map((v, i) => (
               <input key={i} ref={el => otpRefs.current[i] = el}
@@ -1058,6 +1086,85 @@ function DashboardPage({ user, onNavigate, onSignOut }) {
 }
 
 /* ─────────────────────────────────────────────────────────────────
+   CUSTOM REACT FLOW NODE TYPES
+   Diamond  → decision (if / elif / for / while)
+   Parallelogram → I/O (print / input)
+──────────────────────────────────────────────────────────────────*/
+
+// ── Diamond node ─────────────────────────────────────────────────
+function DiamondNode({ data }) {
+  const color = data.color || "#fca5a5";
+  const bg    = data.bg    || "#7f1d1d";
+  const size  = 110;          // half-width of diamond
+  const h     = 70;           // half-height
+  const W     = size * 2 + 40;
+  const H     = h    * 2 + 20;
+  // diamond polygon in the SVG coordinate space
+  const pts   = `${W/2},4 ${W-4},${H/2} ${W/2},${H-4} 4,${H/2}`;
+  return (
+    <div style={{ position: "relative", width: W, height: H }}>
+      <Handle type="target" position={Position.Top}
+        style={{ top: 0, left: "50%", background: color, border: "none" }} />
+      <svg width={W} height={H} style={{ position: "absolute", inset: 0 }}>
+        <defs>
+          <filter id={`glow-${data.label?.slice(0,4)}`}>
+            <feGaussianBlur stdDeviation="3" result="blur"/>
+            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+        <polygon points={pts} fill={bg} stroke={color} strokeWidth="2"
+          filter={`url(#glow-${data.label?.slice(0,4)})`}
+          style={{ filter: `drop-shadow(0 0 8px ${color}88)` }} />
+      </svg>
+      <div style={{
+        position: "absolute", inset: 0,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: "8px 24px", textAlign: "center",
+        fontFamily: "'Fira Code', monospace", fontSize: 11,
+        color: "#fff", wordBreak: "break-word", lineHeight: 1.4,
+        pointerEvents: "none",
+      }}>
+        {data.label}
+      </div>
+      <Handle type="source" position={Position.Bottom}
+        style={{ bottom: 0, left: "50%", background: color, border: "none" }} />
+      <Handle type="source" id="right" position={Position.Right}
+        style={{ right: 0, top: "50%", background: color, border: "none" }} />
+    </div>
+  );
+}
+
+// ── Parallelogram node (I/O) ──────────────────────────────────────
+function ParallelogramNode({ data }) {
+  const color = data.color || "#60a5fa";
+  const bg    = data.bg    || "#1e3a5f";
+  return (
+    <div style={{
+      position: "relative",
+      background: bg,
+      border: `2px solid ${color}`,
+      borderRadius: 4,
+      padding: "10px 20px",
+      minWidth: 180,
+      maxWidth: 260,
+      transform: "skewX(-10deg)",
+      boxShadow: `0 0 14px ${color}44`,
+      fontFamily: "'Fira Code', monospace",
+      fontSize: 12, color: "#fff",
+      textAlign: "center", wordBreak: "break-word",
+    }}>
+      <Handle type="target" position={Position.Top}
+        style={{ background: color, border: "none", top: -1 }} />
+      <div style={{ transform: "skewX(10deg)" }}>{data.label}</div>
+      <Handle type="source" position={Position.Bottom}
+        style={{ background: color, border: "none", bottom: -1 }} />
+    </div>
+  );
+}
+
+const NODE_TYPES = { diamond: DiamondNode, parallelogram: ParallelogramNode };
+
+/* ─────────────────────────────────────────────────────────────────
    REACT FLOW DIAGRAM
 ──────────────────────────────────────────────────────────────────*/
 function FlowDiagram({ nodes: initNodes, edges: initEdges }) {
@@ -1068,12 +1175,14 @@ function FlowDiagram({ nodes: initNodes, edges: initEdges }) {
       <ReactFlow
         nodes={nodes} edges={edges}
         onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
+        nodeTypes={NODE_TYPES}
         fitView fitViewOptions={{ padding: 0.2 }}
-        minZoom={0.1} maxZoom={2}
+        minZoom={0.08} maxZoom={2}
       >
         <Background color="#1e2530" gap={20} />
         <Controls style={{ background: "var(--ink2)", border: "1px solid var(--line2)" }} />
-        <MiniMap style={{ background: "var(--ink3)" }} nodeColor={n => n.style?.border?.split("solid ")[1] || "#3a4658"} />
+        <MiniMap style={{ background: "var(--ink3)" }}
+          nodeColor={n => n.data?.color || n.style?.border?.split("solid ")[1] || "#3a4658"} />
       </ReactFlow>
     </div>
   );
@@ -1106,28 +1215,169 @@ def compare_shapes(shapes):
 shapes = [Circle(3), Circle(5), Circle(7)]
 areas = compare_shapes(shapes)
 print("Areas:", areas)
+for i, a in enumerate(areas):
+    print(f"  Circle {i+1}: area = {a:.4f}")
 `;
 
+// ── Plain-English Explanation renderer ───────────────────────────
+// Backend now returns [{title, body}] array instead of raw text
+function ExplanationView({ explanation }) {
+  if (!explanation || !Array.isArray(explanation) || explanation.length === 0) {
+    return <div style={{ color: "var(--fog)", fontSize: 13 }}>No explanation available.</div>;
+  }
+  const iconColors = {
+    "🔍 What it does":    "#00c8a8",
+    "📋 How it works":    "#a78bfa",
+    "💡 Key concepts used": "#fbbf24",
+    "📤 What you'll see": "#38bdf8",
+    "📤 What happens":    "#38bdf8",
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {explanation.map((sec, idx) => {
+        const accent = iconColors[sec.title] || "var(--teal)";
+        const steps  = sec.body.split("\n").filter(Boolean);
+        return (
+          <div key={idx} style={{
+            background: "var(--ink2)",
+            border: `1px solid ${accent}33`,
+            borderLeft: `3px solid ${accent}`,
+            borderRadius: 10, padding: "14px 18px",
+          }}>
+            <div style={{
+              fontFamily: "var(--mono)", fontSize: 11, letterSpacing: ".1em",
+              color: accent, marginBottom: 10, fontWeight: 600,
+            }}>
+              {sec.title}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {steps.map((line, li) => (
+                <div key={li} style={{
+                  fontSize: 13.5, color: "var(--cloud)", lineHeight: 1.7,
+                  fontFamily: "var(--body)",
+                  paddingLeft: line.startsWith("Step") || line.startsWith("•") ? 0 : 0,
+                }}>
+                  {line}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Console output renderer ───────────────────────────────────────
+function ConsoleView({ console: con, isRunning }) {
+  if (isRunning) {
+    return (
+      <div className="out-loading" style={{ height: 200 }}>
+        <div className="loader" />
+        <div className="loader-msg">Running your code…</div>
+      </div>
+    );
+  }
+  if (!con) return (
+    <div className="out-empty" style={{ height: 200 }}>
+      <div className="out-empty-icon">▶</div>
+      <div className="out-empty-h">Not run yet</div>
+      <p className="out-empty-p">Click the <strong style={{ color: "var(--teal)" }}>Run Code</strong> button to execute and see output here.</p>
+    </div>
+  );
+
+  const isErr   = con.status === "error";
+  const isEmpty = !con.stdout.trim() && !con.stderr.trim();
+  const statusColor = { success: "var(--teal)", error: "var(--red)", exited: "var(--gold)" }[con.status] || "var(--silver)";
+  const statusLabel = { success: "✓ Executed successfully", error: "✕ Runtime error", exited: "⚠ Exited" }[con.status] || con.status;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {/* Status bar */}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        background: "var(--ink3)", border: `1px solid ${statusColor}44`,
+        borderRadius: 8, padding: "8px 14px",
+      }}>
+        <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: statusColor, letterSpacing: ".06em", fontWeight: 600 }}>
+          {statusLabel}
+        </span>
+        <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--fog)" }}>
+          {con.elapsed_ms}ms
+        </span>
+      </div>
+
+      {/* stdout */}
+      <div style={{ background: "#080b12", border: "1px solid var(--line2)", borderRadius: 8, overflow: "hidden" }}>
+        <div style={{
+          padding: "5px 14px", borderBottom: "1px solid var(--line2)",
+          fontFamily: "var(--mono)", fontSize: 9, letterSpacing: ".16em",
+          textTransform: "uppercase", color: "var(--teal)", background: "var(--ink3)",
+          display: "flex", alignItems: "center", gap: 6,
+        }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#34d399", display: "inline-block" }} />
+          STDOUT
+        </div>
+        <pre style={{
+          margin: 0, padding: "16px 20px",
+          fontFamily: "'Fira Code', var(--mono)", fontSize: 13, lineHeight: 1.85,
+          color: isEmpty ? "var(--mist)" : "#b8e8c8",
+          minHeight: 80, maxHeight: 320, overflowY: "auto",
+          whiteSpace: "pre-wrap", wordBreak: "break-all",
+        }}>
+          {con.stdout.trim() || "(no output)"}
+        </pre>
+      </div>
+
+      {/* stderr — only when there's content */}
+      {con.stderr.trim() && (
+        <div style={{ background: "#0f0609", border: "1px solid rgba(224,80,80,.35)", borderRadius: 8, overflow: "hidden" }}>
+          <div style={{
+            padding: "5px 14px", borderBottom: "1px solid rgba(224,80,80,.2)",
+            fontFamily: "var(--mono)", fontSize: 9, letterSpacing: ".16em",
+            textTransform: "uppercase", color: "var(--red)", background: "var(--ink3)",
+            display: "flex", alignItems: "center", gap: 6,
+          }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--red)", display: "inline-block" }} />
+            STDERR / TRACEBACK
+          </div>
+          <pre style={{
+            margin: 0, padding: "14px 18px",
+            fontFamily: "'Fira Code', var(--mono)", fontSize: 12, lineHeight: 1.75,
+            color: "#e8a0a0", maxHeight: 260, overflowY: "auto",
+            whiteSpace: "pre-wrap", wordBreak: "break-all",
+          }}>
+            {con.stderr.trim()}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EditorPage({ user, token, onBack, onSignOut }) {
-  const [code, setCode]       = useState("");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult]   = useState(null);
-  const [activeTab, setTab]   = useState("diagram");
-  const [error, setError]     = useState("");
-  const [toast, fireToast]    = useToast();
+  const [code, setCode]           = useState("");
+  const [loadingDiagram, setLoadingDiagram] = useState(false);
+  const [loadingRun, setLoadingRun]         = useState(false);
+  const [result, setResult]       = useState(null);   // diagram + explanation
+  const [consoleOut, setConsoleOut] = useState(null); // execution result
+  const [activeTab, setTab]       = useState("diagram");
+  const [error, setError]         = useState("");
+  const [toast, fireToast]        = useToast();
   const taRef = useRef(null);
 
-  const lineCount = code.split("\n").length;
-  const lines = Array.from({ length: lineCount }, (_, i) => i + 1);
+  const lineCount = Math.max(1, code.split("\n").length);
+  const lineNums  = Array.from({ length: lineCount }, (_, i) => i + 1);
 
   function syncScroll(e) {
     const lineNums = e.target.previousSibling;
     if (lineNums) lineNums.scrollTop = e.target.scrollTop;
   }
 
-  async function handleRun() {
+  // ── Generate Flowchart + Explanation (no run) ─────────────────
+  async function handleGenerate() {
     if (!code.trim()) return fireToast("err", "Please paste some Python code first");
-    setLoading(true); setResult(null); setError("");
+    setLoadingDiagram(true); setResult(null); setError(""); setConsoleOut(null);
     try {
       const data = await apiFetch(`/visualize?token=${token}`, {
         method: "POST",
@@ -1135,14 +1385,45 @@ function EditorPage({ user, token, onBack, onSignOut }) {
       });
       setResult(data);
       setTab("diagram");
-      fireToast("ok", `Architecture generated! ${data.stats.node_count} nodes`);
+      fireToast("ok", `Flowchart ready! ${data.stats.node_count} nodes`);
     } catch (err) {
       setError(err.message);
       fireToast("err", err.message);
     } finally {
-      setLoading(false);
+      setLoadingDiagram(false);
     }
   }
+
+  // ── Run Code only (console tab) ───────────────────────────────
+  async function handleRun() {
+    if (!code.trim()) return fireToast("err", "Please paste some Python code first");
+    setLoadingRun(true); setTab("console");
+    try {
+      const data = await apiFetch(`/run?token=${token}`, {
+        method: "POST",
+        body: JSON.stringify({ code }),
+      });
+      setConsoleOut(data);
+      if (data.status === "error") {
+        fireToast("err", "Code ran with errors — check Console tab");
+      } else {
+        fireToast("ok", `Executed in ${data.elapsed_ms}ms`);
+      }
+    } catch (err) {
+      fireToast("err", err.message);
+    } finally {
+      setLoadingRun(false);
+    }
+  }
+
+  const TABS = [
+    { id: "diagram",     label: "Flowchart",   icon: "⬡" },
+    { id: "console",     label: "Console",     icon: "▶",
+      badge: consoleOut ? (consoleOut.status === "error" ? "ERR" : "OK") : null,
+      badgeOk: consoleOut?.status !== "error",
+    },
+    { id: "explanation", label: "Explanation", icon: "📋" },
+  ];
 
   return (
     <div className="page editor-page">
@@ -1151,7 +1432,7 @@ function EditorPage({ user, token, onBack, onSignOut }) {
       <NavBar user={user} section="Python" tealSection onLogoClick={onBack} onSignOut={onSignOut} />
 
       <div className="editor-body">
-        {/* INPUT PANEL */}
+        {/* ── INPUT PANEL ── */}
         <div className="editor-panel">
           <div className="panel-hdr">
             <div className="panel-title">
@@ -1159,14 +1440,14 @@ function EditorPage({ user, token, onBack, onSignOut }) {
               Python Source Code
             </div>
             <div className="panel-actions">
-              <button className="panel-btn" onClick={() => { setCode(SAMPLE); }}>Load Sample</button>
-              <button className="panel-btn" onClick={() => { setCode(""); setResult(null); setError(""); }}>Clear</button>
+              <button className="panel-btn" onClick={() => setCode(SAMPLE)}>Load Sample</button>
+              <button className="panel-btn" onClick={() => { setCode(""); setResult(null); setConsoleOut(null); setError(""); }}>Clear</button>
             </div>
           </div>
 
           <div className="editor-wrap">
             <div className="line-nums" style={{ overflowY: "hidden" }}>
-              {lines.map(n => <div key={n} className="line-num">{n}</div>)}
+              {lineNums.map(n => <div key={n} className="line-num">{n}</div>)}
             </div>
             <textarea
               ref={taRef}
@@ -1174,94 +1455,166 @@ function EditorPage({ user, token, onBack, onSignOut }) {
               value={code}
               onChange={e => setCode(e.target.value)}
               onScroll={syncScroll}
-              placeholder={"# Paste your Python code here...\n# Or click 'Load Sample' to try an example"}
+              placeholder={"# Paste your Python code here…\n# Click 'Load Sample' to try an example"}
               spellCheck={false}
             />
           </div>
 
+          {/* ── Two-button run bar ── */}
           <div className="run-bar">
             <div className="run-info">Language: <span>Python</span> · AST-powered</div>
-            <button className="btn-run" onClick={handleRun} disabled={loading}>
-              {loading
-                ? <><div className="loader" style={{ width: 14, height: 14 }} /> Analyzing…</>
-                : <><IconPlay /> Generate Flowchart</>
-              }
-            </button>
+            <div style={{ display: "flex", gap: 8 }}>
+              {/* RUN CODE button — executes only */}
+              <button
+                style={{
+                  display: "flex", alignItems: "center", gap: 7,
+                  background: "transparent",
+                  color: loadingRun ? "var(--fog)" : "var(--teal)",
+                  border: "1px solid var(--teal)",
+                  borderRadius: 7, fontSize: 13, fontWeight: 600,
+                  padding: "9px 16px", cursor: "pointer",
+                  transition: "background .2s, box-shadow .2s",
+                  opacity: loadingRun ? .6 : 1,
+                }}
+                onClick={handleRun}
+                disabled={loadingRun || loadingDiagram}
+              >
+                {loadingRun
+                  ? <><div className="loader" style={{ width: 13, height: 13 }} /> Running…</>
+                  : <>▶ Run Code</>
+                }
+              </button>
+
+              {/* GENERATE FLOWCHART button */}
+              <button
+                className="btn-run"
+                onClick={handleGenerate}
+                disabled={loadingDiagram || loadingRun}
+              >
+                {loadingDiagram
+                  ? <><div className="loader" style={{ width: 13, height: 13 }} /> Generating…</>
+                  : <><IconPlay /> Generate Flowchart</>
+                }
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* OUTPUT PANEL */}
+        {/* ── OUTPUT PANEL ── */}
         <div className="output-panel">
-          {result && (
+          {(result || consoleOut) ? (
             <div className="out-tabs">
-              {["diagram", "explanation", "stats"].map(t => (
-                <button key={t} className={`out-tab ${activeTab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-                  {t.charAt(0).toUpperCase() + t.slice(1)}
+              {TABS.map(t => (
+                <button key={t.id}
+                  className={`out-tab ${activeTab === t.id ? "active" : ""}`}
+                  onClick={() => setTab(t.id)}>
+                  {t.icon} {t.label}
+                  {t.badge && (
+                    <span style={{
+                      marginLeft: 6, fontSize: 9, fontFamily: "var(--mono)",
+                      background: t.badgeOk ? "rgba(0,200,168,.2)" : "rgba(224,80,80,.25)",
+                      color:      t.badgeOk ? "var(--teal)" : "var(--red)",
+                      border:     `1px solid ${t.badgeOk ? "rgba(0,200,168,.4)" : "rgba(224,80,80,.4)"}`,
+                      borderRadius: 20, padding: "1px 6px", letterSpacing: ".04em",
+                    }}>
+                      {t.badge}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
-          )}
-
-          {!result && (
+          ) : (
             <div className="panel-hdr">
               <div className="panel-title">
                 <div className="ptitle-dot" style={{ background: "var(--fog)", boxShadow: "none" }} />
-                Flowchart Output
+                Output
               </div>
             </div>
           )}
 
           <div className="out-content">
-            {!result && !loading && !error && (
+            {/* Empty state */}
+            {!result && !consoleOut && !loadingDiagram && !loadingRun && !error && (
               <div className="out-empty">
                 <div className="out-empty-icon">⬡</div>
-                <div className="out-empty-h">No code yet</div>
-                <p className="out-empty-p">Paste Python source on the left and click "Generate Flowchart" to visualize it.</p>
+                <div className="out-empty-h">Ready to visualize</div>
+                <p className="out-empty-p">
+                  Click <strong style={{ color: "var(--teal)" }}>▶ Run Code</strong> to execute,<br />
+                  or <strong style={{ color: "var(--teal)" }}>Generate Flowchart</strong> to visualize.
+                </p>
               </div>
             )}
 
-            {loading && (
+            {/* Diagram loading */}
+            {loadingDiagram && (
               <div className="out-loading">
                 <div className="loader" />
                 <div className="loader-msg">Parsing AST & building flowchart…</div>
               </div>
             )}
 
-            {error && !loading && (
+            {/* Error */}
+            {error && !loadingDiagram && (
               <div style={{ padding: 20 }}>
                 <div className="err-box" style={{ display: "block" }}>{error}</div>
               </div>
             )}
 
-            {result && !loading && (
-              <>
-                {activeTab === "diagram" && (
-                  <div>
-                    <div className="sect-lbl">Interactive Flowchart</div>
-                    <FlowDiagram nodes={result.nodes} edges={result.edges} />
-                    <div className="stats-row" style={{ marginTop: 14 }}>
-                      <span className="stat-pill">🧩 {result.stats.node_count} nodes</span>
-                      <span className="stat-pill">🔗 {result.stats.edge_count} edges</span>
-                      <span className="stat-pill">📄 {result.stats.lines_parsed} lines</span>
-                      <span className="stat-pill">🆔 Code #{result.code_id}</span>
+            {/* ── FLOWCHART TAB ── */}
+            {activeTab === "diagram" && result && !loadingDiagram && (
+              <div>
+                <div className="sect-lbl">Interactive Flowchart</div>
+                {/* Legend */}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+                  {[
+                    { color: "#fca5a5", shape: "◇", label: "Decision (if/elif)" },
+                    { color: "#34d399", shape: "◇", label: "Loop (for/while)" },
+                    { color: "#60a5fa", shape: "▱", label: "I/O (print/input)" },
+                    { color: "#a78bfa", shape: "□", label: "Function" },
+                    { color: "#38bdf8", shape: "□", label: "Process / Assign" },
+                  ].map(l => (
+                    <div key={l.label} style={{
+                      display: "flex", alignItems: "center", gap: 5,
+                      fontSize: 10, color: "var(--silver)", fontFamily: "var(--mono)",
+                      background: "var(--ink3)", border: `1px solid ${l.color}44`,
+                      borderRadius: 5, padding: "3px 8px",
+                    }}>
+                      <span style={{ color: l.color, fontSize: 11 }}>{l.shape}</span>
+                      {l.label}
                     </div>
-                  </div>
-                )}
-                {activeTab === "explanation" && (
-                  <div>
-                    <div className="sect-lbl">Code Explanation</div>
-                    <div className="expl-card">{result.explanation}</div>
-                  </div>
-                )}
-                {activeTab === "stats" && (
-                  <div>
-                    <div className="sect-lbl">Parse Statistics</div>
-                    <div className="expl-card">
-                      {JSON.stringify(result.stats, null, 2)}
-                    </div>
-                  </div>
-                )}
-              </>
+                  ))}
+                </div>
+                <FlowDiagram nodes={result.nodes} edges={result.edges} />
+                <div className="stats-row" style={{ marginTop: 14 }}>
+                  <span className="stat-pill">🧩 {result.stats.node_count} nodes</span>
+                  <span className="stat-pill">🔗 {result.stats.edge_count} edges</span>
+                  <span className="stat-pill">📄 {result.stats.lines_parsed} lines</span>
+                  <span className="stat-pill">🆔 #{result.code_id}</span>
+                </div>
+              </div>
+            )}
+
+            {/* ── CONSOLE TAB ── */}
+            {activeTab === "console" && (
+              <div>
+                <div className="sect-lbl">Execution Output</div>
+                <ConsoleView console={consoleOut} isRunning={loadingRun} />
+              </div>
+            )}
+
+            {/* ── EXPLANATION TAB ── */}
+            {activeTab === "explanation" && result && !loadingDiagram && (
+              <div>
+                <div className="sect-lbl">Plain English Explanation</div>
+                <ExplanationView explanation={result.explanation} />
+              </div>
+            )}
+            {activeTab === "explanation" && !result && (
+              <div className="out-empty" style={{ height: 200 }}>
+                <div className="out-empty-icon">📋</div>
+                <div className="out-empty-h">No explanation yet</div>
+                <p className="out-empty-p">Click <strong style={{ color: "var(--teal)" }}>Generate Flowchart</strong> to get an explanation.</p>
+              </div>
             )}
           </div>
         </div>

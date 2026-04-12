@@ -1282,17 +1282,17 @@ function ConsoleView({ console: con, isRunning }) {
     <div className="out-empty" style={{ height: 200 }}>
       <div className="out-empty-icon">▶</div>
       <div className="out-empty-h">Not run yet</div>
-      <p className="out-empty-p">Click the <strong style={{ color: "var(--teal)" }}>Run Code</strong> button to execute and see output here.</p>
+      <p className="out-empty-p">Click the <strong style={{ color: "var(--teal)" }}>▶ Run Code</strong> button to execute and see output here.</p>
     </div>
   );
 
-  const isErr   = con.status === "error";
-  const isEmpty = !con.stdout.trim() && !con.stderr.trim();
   const statusColor = { success: "var(--teal)", error: "var(--red)", exited: "var(--gold)" }[con.status] || "var(--silver)";
   const statusLabel = { success: "✓ Executed successfully", error: "✕ Runtime error", exited: "⚠ Exited" }[con.status] || con.status;
+  const hasInputs   = con.auto_inputs && con.auto_inputs.length > 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+
       {/* Status bar */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -1302,12 +1302,37 @@ function ConsoleView({ console: con, isRunning }) {
         <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: statusColor, letterSpacing: ".06em", fontWeight: 600 }}>
           {statusLabel}
         </span>
-        <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--fog)" }}>
-          {con.elapsed_ms}ms
-        </span>
+        <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--fog)" }}>{con.elapsed_ms}ms</span>
       </div>
 
-      {/* stdout */}
+      {/* Auto-filled inputs info — shown only when input() was used */}
+      {hasInputs && (
+        <div style={{
+          background: "rgba(240,165,0,.05)", border: "1px solid rgba(240,165,0,.25)",
+          borderRadius: 8, padding: "10px 14px",
+        }}>
+          <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--gold)", letterSpacing: ".1em", marginBottom: 8, textTransform: "uppercase" }}>
+            📥 Auto-filled input() values
+          </div>
+          {con.auto_inputs.map((inp, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, fontSize: 12, marginBottom: 5, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ color: "var(--fog)", fontFamily: "var(--mono)", fontSize: 11, flexShrink: 0 }}>
+                {(inp.prompt || "(no prompt)").replace(/:\s*$/, "") + ":"}
+              </span>
+              <span style={{
+                fontFamily: "var(--mono)", fontSize: 12, color: "var(--gold)",
+                background: "rgba(240,165,0,.12)", border: "1px solid rgba(240,165,0,.25)",
+                borderRadius: 4, padding: "1px 8px",
+              }}>"{inp.auto_value}"</span>
+            </div>
+          ))}
+          <div style={{ fontSize: 11, color: "var(--fog)", marginTop: 8, lineHeight: 1.6, borderTop: "1px solid rgba(240,165,0,.15)", paddingTop: 8 }}>
+            ℹ️ Since code runs without a live terminal, <code style={{ fontFamily: "var(--mono)", color: "var(--teal)", fontSize: 11 }}>input()</code> values are automatically detected from your code and filled in.
+          </div>
+        </div>
+      )}
+
+      {/* STDOUT */}
       <div style={{ background: "#080b12", border: "1px solid var(--line2)", borderRadius: 8, overflow: "hidden" }}>
         <div style={{
           padding: "5px 14px", borderBottom: "1px solid var(--line2)",
@@ -1316,21 +1341,21 @@ function ConsoleView({ console: con, isRunning }) {
           display: "flex", alignItems: "center", gap: 6,
         }}>
           <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#34d399", display: "inline-block" }} />
-          STDOUT
+          STDOUT — Program Output
         </div>
         <pre style={{
           margin: 0, padding: "16px 20px",
           fontFamily: "'Fira Code', var(--mono)", fontSize: 13, lineHeight: 1.85,
-          color: isEmpty ? "var(--mist)" : "#b8e8c8",
-          minHeight: 80, maxHeight: 320, overflowY: "auto",
+          color: con.stdout.trim() ? "#b8e8c8" : "var(--mist)",
+          minHeight: 80, maxHeight: 360, overflowY: "auto",
           whiteSpace: "pre-wrap", wordBreak: "break-all",
         }}>
           {con.stdout.trim() || "(no output)"}
         </pre>
       </div>
 
-      {/* stderr — only when there's content */}
-      {con.stderr.trim() && (
+      {/* STDERR — only when there's content */}
+      {con.stderr && con.stderr.trim() && (
         <div style={{ background: "#0f0609", border: "1px solid rgba(224,80,80,.35)", borderRadius: 8, overflow: "hidden" }}>
           <div style={{
             padding: "5px 14px", borderBottom: "1px solid rgba(224,80,80,.2)",
@@ -1344,13 +1369,96 @@ function ConsoleView({ console: con, isRunning }) {
           <pre style={{
             margin: 0, padding: "14px 18px",
             fontFamily: "'Fira Code', var(--mono)", fontSize: 12, lineHeight: 1.75,
-            color: "#e8a0a0", maxHeight: 260, overflowY: "auto",
+            color: "#e8a0a0", maxHeight: 300, overflowY: "auto",
             whiteSpace: "pre-wrap", wordBreak: "break-all",
           }}>
             {con.stderr.trim()}
           </pre>
         </div>
       )}
+    </div>
+  );
+}
+
+
+/* ─────────────────────────────────────────────────────────────────
+   INPUT MODAL — shown when code has input() calls
+   User fills in values before execution
+──────────────────────────────────────────────────────────────────*/
+function InputModal({ prompts, values, onChange, onRun, onCancel }) {
+  return (
+    <div style={{
+      position:"fixed",inset:0,background:"rgba(0,0,0,.75)",
+      zIndex:999,display:"flex",alignItems:"center",justifyContent:"center",
+      backdropFilter:"blur(4px)",animation:"pg .25s ease",
+    }}>
+      <div style={{
+        background:"var(--ink2)",border:"1px solid var(--teal)",
+        borderRadius:14,padding:"28px 32px",width:"100%",maxWidth:440,
+        boxShadow:"0 24px 80px rgba(0,0,0,.6)",
+      }}>
+        {/* Header */}
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
+          <div style={{fontSize:22}}>⌨️</div>
+          <div style={{fontFamily:"var(--disp)",fontSize:20,fontWeight:800,letterSpacing:"-.02em"}}>
+            Program needs input
+          </div>
+        </div>
+        <p style={{fontSize:13,color:"var(--fog)",marginBottom:22,lineHeight:1.6}}>
+          Your code calls <code style={{fontFamily:"var(--mono)",color:"var(--teal)",background:"var(--ink3)",padding:"1px 6px",borderRadius:4}}>input()</code> {prompts.length} time{prompts.length>1?"s":""}.
+          Enter the values below — they will be fed into the program in order.
+        </p>
+
+        {/* Input fields */}
+        <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:24}}>
+          {prompts.map((p, i) => (
+            <div key={i}>
+              <div style={{
+                fontSize:11,fontFamily:"var(--mono)",color:"var(--silver)",
+                marginBottom:6,letterSpacing:".06em",
+              }}>
+                Input {i+1}{p.prompt ? ` — "${p.prompt}"` : ""}
+              </div>
+              <input
+                type="text"
+                value={values[i] || ""}
+                onChange={e => onChange(i, e.target.value)}
+                onKeyDown={e => { if(e.key==="Enter" && i===prompts.length-1) onRun(values); }}
+                placeholder={p.prompt || `Enter value ${i+1}…`}
+                autoFocus={i===0}
+                style={{
+                  width:"100%",background:"var(--ink3)",
+                  border:"1px solid var(--line2)",borderRadius:8,
+                  color:"var(--white)",fontSize:14,fontFamily:"var(--mono)",
+                  padding:"11px 14px",outline:"none",
+                  transition:"border-color .2s",
+                }}
+                onFocus={e=>e.target.style.borderColor="var(--teal)"}
+                onBlur={e=>e.target.style.borderColor="var(--line2)"}
+              />
+            </div>
+          ))}
+        </div>
+
+        {/* Buttons */}
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={onCancel} style={{
+            flex:1,padding:"11px 0",background:"transparent",
+            border:"1px solid var(--line2)",borderRadius:8,
+            color:"var(--silver)",fontSize:13,fontWeight:500,cursor:"pointer",
+          }}>
+            Cancel
+          </button>
+          <button onClick={() => onRun(values)} style={{
+            flex:2,padding:"11px 0",background:"var(--teal)",
+            border:"none",borderRadius:8,color:"var(--ink)",
+            fontSize:13,fontWeight:700,cursor:"pointer",
+            boxShadow:"0 4px 20px var(--teal-glow)",
+          }}>
+            ▶ Run with these values
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1366,15 +1474,21 @@ function EditorPage({ user, token, onBack, onSignOut }) {
   const [toast, fireToast]        = useToast();
   const taRef = useRef(null);
 
+  // Input modal state
+  const [inputPrompts,   setInputPrompts]   = useState([]);
+  const [inputValues,    setInputValues]    = useState([]);
+  const [showInputModal, setShowInputModal] = useState(false);
+  const [scanningInputs, setScanningInputs] = useState(false);
+
   const lineCount = Math.max(1, code.split("\n").length);
   const lineNums  = Array.from({ length: lineCount }, (_, i) => i + 1);
 
   function syncScroll(e) {
-    const lineNums = e.target.previousSibling;
-    if (lineNums) lineNums.scrollTop = e.target.scrollTop;
+    const ln = e.target.previousSibling;
+    if (ln) ln.scrollTop = e.target.scrollTop;
   }
 
-  // ── Generate Flowchart + Explanation (no run) ─────────────────
+  // ── Generate Flowchart + Explanation ──────────────────────────
   async function handleGenerate() {
     if (!code.trim()) return fireToast("err", "Please paste some Python code first");
     setLoadingDiagram(true); setResult(null); setError(""); setConsoleOut(null);
@@ -1394,21 +1508,41 @@ function EditorPage({ user, token, onBack, onSignOut }) {
     }
   }
 
-  // ── Run Code only (console tab) ───────────────────────────────
+  // ── Run Code: scan for input() first, show dialog if needed ───
   async function handleRun() {
     if (!code.trim()) return fireToast("err", "Please paste some Python code first");
+    setScanningInputs(true);
+    try {
+      const scan = await apiFetch(`/scan-inputs?token=${token}`, {
+        method: "POST",
+        body: JSON.stringify({ code, user_inputs: [] }),
+      });
+      const prompts = scan.inputs || [];
+      if (prompts.length > 0) {
+        setInputPrompts(prompts);
+        setInputValues(prompts.map(() => ""));
+        setShowInputModal(true);
+      } else {
+        await executeCode([]);
+      }
+    } catch (_) {
+      await executeCode([]);
+    } finally {
+      setScanningInputs(false);
+    }
+  }
+
+  async function executeCode(values) {
+    setShowInputModal(false);
     setLoadingRun(true); setTab("console");
     try {
       const data = await apiFetch(`/run?token=${token}`, {
         method: "POST",
-        body: JSON.stringify({ code }),
+        body: JSON.stringify({ code, user_inputs: values }),
       });
       setConsoleOut(data);
-      if (data.status === "error") {
-        fireToast("err", "Code ran with errors — check Console tab");
-      } else {
-        fireToast("ok", `Executed in ${data.elapsed_ms}ms`);
-      }
+      fireToast(data.status === "error" ? "err" : "ok",
+        data.status === "error" ? "Runtime error — check Console" : `Done in ${data.elapsed_ms}ms`);
     } catch (err) {
       fireToast("err", err.message);
     } finally {
@@ -1430,6 +1564,17 @@ function EditorPage({ user, token, onBack, onSignOut }) {
       <style>{STYLES}</style>
       <Toast {...toast} />
       <NavBar user={user} section="Python" tealSection onLogoClick={onBack} onSignOut={onSignOut} />
+
+      {/* ── Input Values Modal ── */}
+      {showInputModal && (
+        <InputModal
+          prompts={inputPrompts}
+          values={inputValues}
+          onChange={(i, val) => setInputValues(prev => { const n=[...prev]; n[i]=val; return n; })}
+          onRun={vals => executeCode(vals)}
+          onCancel={() => setShowInputModal(false)}
+        />
+      )}
 
       <div className="editor-body">
         {/* ── INPUT PANEL ── */}
@@ -1477,9 +1622,11 @@ function EditorPage({ user, token, onBack, onSignOut }) {
                   opacity: loadingRun ? .6 : 1,
                 }}
                 onClick={handleRun}
-                disabled={loadingRun || loadingDiagram}
+                disabled={loadingRun || loadingDiagram || scanningInputs}
               >
-                {loadingRun
+                {scanningInputs
+                  ? <><div className="loader" style={{ width: 13, height: 13 }} /> Scanning…</>
+                  : loadingRun
                   ? <><div className="loader" style={{ width: 13, height: 13 }} /> Running…</>
                   : <>▶ Run Code</>
                 }

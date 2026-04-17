@@ -22,7 +22,7 @@ async function apiFetch(path, options = {}) {
 }
 
 /* ─────────────────────────────────────────────────────────────────
-   STYLES  (injected as a <style> tag — no build tool needed)
+   STYLES
 ──────────────────────────────────────────────────────────────────*/
 const STYLES = `
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=DM+Mono:wght@400;500&family=Syne:wght@700;800&display=swap');
@@ -52,11 +52,9 @@ button { font-family: var(--body); cursor: pointer; }
 input  { font-family: var(--body); }
 * { scrollbar-width: thin; scrollbar-color: var(--mist) transparent; }
 
-/* ── page wrapper ── */
 .page { min-height: 100vh; display: flex; animation: pg .5s cubic-bezier(.16,1,.3,1) both; }
 @keyframes pg { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
 
-/* ── auth split ── */
 .auth-left {
   width: 48%; flex-shrink: 0;
   background: linear-gradient(160deg, #1c2538 0%, #1a2030 100%);
@@ -75,11 +73,8 @@ input  { font-family: var(--body); }
     radial-gradient(ellipse 60% 50% at 20% 80%, rgba(0,200,168,.06) 0%, transparent 70%),
     radial-gradient(ellipse 50% 40% at 80% 10%, rgba(0,120,180,.06) 0%, transparent 70%);
 }
-.arch-lines {
-  position: absolute; inset: 0; pointer-events: none; opacity: .5;
-}
+.arch-lines { position: absolute; inset: 0; pointer-events: none; opacity: .5; }
 
-/* ── wordmark ── */
 .wm { display: flex; align-items: center; gap: 12px; position: relative; z-index: 2; margin-bottom: 0; }
 .wm-icon {
   width: 36px; height: 36px; background: var(--teal); border-radius: 8px;
@@ -94,7 +89,6 @@ input  { font-family: var(--body); }
   padding: 2px 8px; border-radius: 20px; margin-left: 4px;
 }
 
-/* ── left hero ── */
 .left-hero { position: relative; z-index: 2; margin-top: auto; padding-bottom: 32px; }
 .eyebrow {
   font-family: var(--mono); font-size: 10px; letter-spacing: .22em; text-transform: uppercase;
@@ -116,20 +110,17 @@ input  { font-family: var(--body); }
 }
 .chip-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 6px var(--teal-glow); }
 
-/* ── form box ── */
 .form-box { width: 100%; max-width: 390px; }
 .form-title { font-family: var(--disp); font-size: 28px; font-weight: 800; letter-spacing: -.03em; margin-bottom: 6px; }
 .form-sub { font-size: 14px; color: var(--fog); margin-bottom: 28px; line-height: 1.5; }
 .form-sub button { background: none; border: none; color: var(--teal); font-size: 14px; font-weight: 500; padding: 0; transition: color .2s; }
 .form-sub button:hover { color: #00e8c0; }
 
-/* ── progress dots ── */
 .prog { display: flex; gap: 5px; margin-bottom: 24px; }
 .dot { width: 6px; height: 6px; background: var(--line2); border-radius: 3px; transition: all .3s; }
 .dot.done { background: var(--teal); opacity: .5; }
 .dot.active { background: var(--teal); width: 18px; box-shadow: 0 0 8px var(--teal-glow); }
 
-/* ── field ── */
 .field { margin-bottom: 14px; position: relative; }
 .flabel {
   font-size: 12px; font-weight: 500; color: var(--cloud); margin-bottom: 7px;
@@ -165,7 +156,6 @@ input  { font-family: var(--body); }
 .val-ok  { color: var(--teal); }
 .val-err { color: var(--red); }
 
-/* ── phone group ── */
 .phone-row { display: flex; gap: 8px; }
 .cc-inp {
   width: 72px; flex-shrink: 0;
@@ -177,7 +167,6 @@ input  { font-family: var(--body); }
 }
 .cc-inp:focus { border-color: var(--teal); box-shadow: 0 0 0 3px rgba(0,200,168,.14); }
 
-/* ── password strength ── */
 .str-bars { display: flex; gap: 4px; margin-top: 8px; }
 .str-bar { flex: 1; height: 3px; border-radius: 2px; background: var(--line); transition: background .35s; }
 .str-weak   { background: var(--red); }
@@ -186,13 +175,11 @@ input  { font-family: var(--body); }
 .str-strong { background: var(--teal); }
 .str-lbl { font-family: var(--mono); font-size: 10px; color: var(--fog); margin-top: 5px; letter-spacing: .04em; }
 
-/* ── checkbox ── */
 .check-row { display: flex; align-items: flex-start; gap: 10px; margin-top: 16px; }
 .check-row input[type=checkbox] { width: 16px; height: 16px; flex-shrink: 0; margin-top: 2px; accent-color: var(--teal); cursor: pointer; }
 .check-lbl { font-size: 12px; color: var(--fog); line-height: 1.5; }
 .check-lbl a { color: var(--teal); text-decoration: none; }
 
-/* ── buttons ── */
 .btn-primary {
   width: 100%; padding: 13px 20px;
   background: var(--teal); color: var(--ink); border: none; border-radius: 8px;
@@ -213,14 +200,24 @@ input  { font-family: var(--body); }
 }
 .btn-ghost:hover { border-color: var(--mist); color: var(--white); }
 
-/* ── error banner ── */
 .err-box {
   background: rgba(224,80,80,.08); border: 1px solid rgba(224,80,80,.3);
   border-radius: 8px; padding: 12px 14px; margin-bottom: 14px;
   font-size: 12px; color: #e8a0a0; line-height: 1.6;
 }
 
-/* ── OTP boxes ── */
+/* ── SUCCESS BANNER (new) ── */
+.success-box {
+  background: rgba(0,200,168,.08); border: 1px solid rgba(0,200,168,.35);
+  border-radius: 8px; padding: 14px 16px; margin-bottom: 18px;
+  font-size: 13px; color: var(--teal); line-height: 1.6;
+  display: flex; align-items: flex-start; gap: 10px;
+}
+.success-box-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+.success-box-text { display: flex; flex-direction: column; gap: 3px; }
+.success-box-title { font-weight: 600; font-size: 13px; }
+.success-box-sub { font-size: 12px; color: var(--silver); }
+
 .otp-row { display: flex; gap: 8px; justify-content: center; margin: 24px 0 8px; }
 .otp-box {
   width: 48px; height: 56px; background: var(--ink2);
@@ -234,14 +231,12 @@ input  { font-family: var(--body); }
 .otp-timer { display: block; text-align: center; font-family: var(--mono); font-size: 11px; color: var(--gold); margin-top: 8px; letter-spacing: .06em; }
 .otp-resend { display: block; text-align: center; font-size: 12px; color: var(--teal); cursor: pointer; margin-top: 10px; font-weight: 500; background: none; border: none; }
 
-/* ── or divider ── */
 .or-div {
   display: flex; align-items: center; gap: 14px; margin: 20px 0;
   font-size: 12px; color: var(--mist); font-family: var(--mono); letter-spacing: .08em;
 }
 .or-div::before, .or-div::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 
-/* ── nav bar ── */
 .nav {
   height: 64px; background: var(--ink2); border-bottom: 1px solid var(--line);
   display: flex; align-items: center; justify-content: space-between;
@@ -271,7 +266,6 @@ input  { font-family: var(--body); }
 }
 .nav-signout:hover { color: var(--red); }
 
-/* ── dashboard ── */
 .dash-page { flex-direction: column; }
 .dash-body { flex: 1; padding: 48px 64px; overflow-y: auto; }
 .greeting-eyebrow {
@@ -323,7 +317,6 @@ input  { font-family: var(--body); }
 .card-arrow { position: absolute; right: 20px; bottom: 20px; font-size: 16px; color: var(--mist); transition: color .2s, transform .2s; }
 .lang-card:hover:not(.disabled) .card-arrow { color: var(--teal); transform: translate(3px,-3px); }
 
-/* ── editor page ── */
 .editor-page { flex-direction: column; }
 .editor-body {
   flex: 1; display: grid; grid-template-columns: 1fr 1fr;
@@ -345,7 +338,6 @@ input  { font-family: var(--body); }
 }
 .panel-btn:hover { color: var(--white); border-color: var(--mist); }
 
-/* ── code editor ── */
 .editor-wrap { flex: 1; position: relative; overflow: hidden; background: var(--ink); }
 .line-nums {
   position: absolute; left: 0; top: 0; bottom: 0; width: 44px;
@@ -361,7 +353,6 @@ input  { font-family: var(--body); }
 }
 .code-ta::placeholder { color: var(--mist); }
 
-/* ── run bar ── */
 .run-bar {
   padding: 12px 20px; border-top: 1px solid var(--line);
   display: flex; align-items: center; justify-content: space-between;
@@ -379,7 +370,6 @@ input  { font-family: var(--body); }
 .btn-run:disabled { opacity: .6; cursor: not-allowed; }
 .btn-run svg { width: 13px; height: 13px; }
 
-/* ── output panel ── */
 .output-panel { display: flex; flex-direction: column; overflow: hidden; }
 .out-tabs {
   display: flex; gap: 2px; padding: 10px 14px 0;
@@ -395,7 +385,6 @@ input  { font-family: var(--body); }
 .out-tab.active { color: var(--teal); border-bottom-color: var(--teal); background: var(--ink); }
 .out-content { flex: 1; overflow-y: auto; padding: 20px; }
 
-/* ── empty / loading / result ── */
 .out-empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 40px; }
 .out-empty-icon { width: 56px; height: 56px; border-radius: 14px; background: var(--ink3); border: 1px solid var(--line2); display: flex; align-items: center; justify-content: center; font-size: 24px; margin-bottom: 20px; }
 .out-empty-h { font-family: var(--disp); font-size: 18px; font-weight: 800; color: var(--cloud); margin-bottom: 8px; }
@@ -405,7 +394,6 @@ input  { font-family: var(--body); }
 @keyframes spin { to { transform: rotate(360deg); } }
 .loader-msg { font-family: var(--mono); font-size: 11px; color: var(--fog); letter-spacing: .1em; }
 
-/* ── flow diagram ── */
 .flow-wrap { width: 100%; height: 500px; background: var(--ink3); border: 1px solid var(--line2); border-radius: 10px; overflow: hidden; }
 .stats-row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
 .stat-pill {
@@ -414,17 +402,14 @@ input  { font-family: var(--body); }
   border: 1px solid rgba(0,200,168,.2); padding: 4px 10px; border-radius: 20px;
 }
 
-/* ── explanation ── */
 .expl-card { background: var(--ink2); border: 1px solid var(--line2); border-radius: 10px; padding: 18px 20px; font-size: 13px; color: var(--silver); line-height: 1.7; white-space: pre-wrap; }
 
-/* ── section label ── */
 .sect-lbl {
   font-family: var(--mono); font-size: 9px; letter-spacing: .2em; text-transform: uppercase;
   color: var(--teal); margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
 }
 .sect-lbl::after { content:''; flex:1; height:1px; background: rgba(0,200,168,.2); }
 
-/* ── toast ── */
 .toast {
   position: fixed; bottom: 28px; left: 50%;
   transform: translateX(-50%) translateY(80px);
@@ -543,9 +528,60 @@ function NavBar({ user, section, tealSection, onLogoClick, onSignOut }) {
 }
 
 /* ─────────────────────────────────────────────────────────────────
-   REGISTER  (3 steps: info → password → OTP verify)
+   AUTH LEFT PANEL (shared between login & register)
 ──────────────────────────────────────────────────────────────────*/
-function RegisterView({ onSwitch, onSuccess, toast }) {
+function AuthLeft() {
+  return (
+    <div className="auth-left">
+      <div className="mesh" />
+      <svg className="arch-lines" viewBox="0 0 700 480" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <line x1="140" y1="120" x2="350" y2="200" stroke="#00C8A8" strokeWidth="1" opacity=".18"/>
+        <line x1="350" y1="200" x2="560" y2="140" stroke="#00C8A8" strokeWidth="1" opacity=".18"/>
+        <line x1="350" y1="200" x2="350" y2="340" stroke="#00C8A8" strokeWidth="1" opacity=".18"/>
+        <line x1="350" y1="340" x2="180" y2="420" stroke="#00C8A8" strokeWidth="1" opacity=".12"/>
+        <line x1="350" y1="340" x2="520" y2="420" stroke="#00C8A8" strokeWidth="1" opacity=".12"/>
+        <circle r="3" fill="#00C8A8" opacity=".6">
+          <animateMotion dur="4s" repeatCount="indefinite" path="M140,120 L350,200"/>
+          <animate attributeName="opacity" values=".6;0;.6" dur="4s" repeatCount="indefinite"/>
+        </circle>
+        <circle r="3" fill="#00C8A8" opacity=".6">
+          <animateMotion dur="3.5s" repeatCount="indefinite" begin="1s" path="M350,200 L560,140"/>
+          <animate attributeName="opacity" values=".6;0;.6" dur="3.5s" repeatCount="indefinite" begin="1s"/>
+        </circle>
+        <g opacity=".25">
+          <rect x="300" y="174" width="100" height="52" rx="6" fill="#00C8A8" fillOpacity=".15" stroke="#00C8A8" strokeWidth="1.2"/>
+          <text x="350" y="203" textAnchor="middle" fill="#00C8A8" fontSize="11" fontFamily="DM Mono,monospace">USERS</text>
+          <rect x="76" y="96" width="128" height="48" rx="5" fill="#0080CC" fillOpacity=".08" stroke="#3A5068" strokeWidth="1"/>
+          <text x="140" y="124" textAnchor="middle" fill="#6BA8D0" fontSize="9" fontFamily="DM Mono,monospace">OTP_VERIFY</text>
+          <rect x="506" y="114" width="120" height="48" rx="5" fill="#0080CC" fillOpacity=".08" stroke="#3A5068" strokeWidth="1"/>
+          <text x="566" y="142" textAnchor="middle" fill="#6BA8D0" fontSize="9" fontFamily="DM Mono,monospace">FLOWCHARTS</text>
+          <rect x="462" y="396" width="118" height="44" rx="5" fill="#0080CC" fillOpacity=".08" stroke="#3A5068" strokeWidth="1"/>
+          <text x="521" y="422" textAnchor="middle" fill="#6BA8D0" fontSize="9" fontFamily="DM Mono,monospace">CODE_SUBMISSIONS</text>
+        </g>
+      </svg>
+
+      <Wordmark />
+      <div className="left-hero">
+        <div className="eyebrow">Code to Architecture</div>
+        <h1 className="hero-h">Turn your<br />code into<br /><em>living diagrams.</em></h1>
+        <p className="hero-p">Paste any Python code and Ragsy automatically generates interactive flowcharts and detailed explanations — instantly.</p>
+        <div className="chips">
+          <div className="chip"><div className="chip-dot" />Interactive flowcharts</div>
+          <div className="chip"><div className="chip-dot" />Mobile OTP auth</div>
+          <div className="chip"><div className="chip-dot" />AST-powered</div>
+          <div className="chip"><div className="chip-dot" />Export ready</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   REGISTER  (3 steps → on success, redirect to LOGIN with banner)
+   CHANGE: onSuccess now calls onRegistered(username) instead of
+           logging the user in directly.
+──────────────────────────────────────────────────────────────────*/
+function RegisterView({ onSwitch, onRegistered, toast }) {
   const [step, setStep]           = useState(1);
   const [username, setUsername]   = useState("");
   const [cc, setCc]               = useState("+91");
@@ -584,7 +620,6 @@ function RegisterView({ onSwitch, onSuccess, toast }) {
 
   const timerDisplay = `${String(Math.floor(timerSecs / 60)).padStart(2,"0")}:${String(timerSecs % 60).padStart(2,"0")}`;
 
-  // Step 1 → Step 2
   async function handleStep1(e) {
     e.preventDefault();
     setError("");
@@ -594,7 +629,6 @@ function RegisterView({ onSwitch, onSuccess, toast }) {
     setStep(2);
   }
 
-  // Step 2 → register → OTP step
   async function handleRegister(e) {
     e.preventDefault();
     setError("");
@@ -608,7 +642,6 @@ function RegisterView({ onSwitch, onSuccess, toast }) {
         body: JSON.stringify({ username: username.trim(), mobile_no: fullMobile, password }),
       });
       setMobileNo(fullMobile);
-      // Only show dev OTP if Twilio did NOT send a real SMS
       setDevOtp(data.sms_sent ? "" : (data.otp_code || ""));
       startTimer(data.expires_in || 300);
       setStep(3);
@@ -622,7 +655,6 @@ function RegisterView({ onSwitch, onSuccess, toast }) {
     }
   }
 
-  // OTP input handling
   function handleOtpInput(val, idx) {
     const d = val.replace(/\D/g, "").slice(0, 1);
     const next = [...otp]; next[idx] = d; setOtp(next);
@@ -632,19 +664,20 @@ function RegisterView({ onSwitch, onSuccess, toast }) {
     if (e.key === "Backspace" && !otp[idx] && idx > 0) otpRefs.current[idx - 1]?.focus();
   }
 
-  // Verify OTP
+  /* ── KEY CHANGE: after OTP verify, call onRegistered instead of onSuccess ── */
   async function handleVerify(e) {
     e.preventDefault();
     const code = otp.join("");
     if (code.length < 6) return setError("Enter the complete 6-digit code");
     setLoading(true); setError("");
     try {
-      const data = await apiFetch("/auth/verify-otp", {
+      // Verify OTP — but we do NOT store token or log the user in
+      await apiFetch("/auth/verify-otp", {
         method: "POST",
         body: JSON.stringify({ mobile_no: mobileNo, otp_code: code }),
       });
-      toast("ok", "Mobile verified! Welcome to Ragsy 🎉");
-      onSuccess(data.token, data.user);
+      // Pass the registered username so login page can pre-fill it
+      onRegistered(username.trim());
     } catch (err) {
       setError(err.message);
     } finally {
@@ -652,7 +685,6 @@ function RegisterView({ onSwitch, onSuccess, toast }) {
     }
   }
 
-  // Resend OTP
   async function handleResend() {
     try {
       const data = await apiFetch("/auth/resend-otp", {
@@ -736,7 +768,6 @@ function RegisterView({ onSwitch, onSuccess, toast }) {
       {/* STEP 3 — OTP verify */}
       {step === 3 && (
         <form onSubmit={handleVerify}>
-          {/* SMS sent confirmation */}
           <div style={{
             textAlign: "center", marginBottom: 16, padding: "12px 16px",
             background: devOtp ? "rgba(240,165,0,.07)" : "rgba(0,200,168,.07)",
@@ -752,7 +783,6 @@ function RegisterView({ onSwitch, onSuccess, toast }) {
             </p>
           </div>
 
-          {/* Dev OTP box — only shown when Twilio not configured */}
           {devOtp && (
             <div style={{
               textAlign: "center", marginBottom: 14,
@@ -777,7 +807,9 @@ function RegisterView({ onSwitch, onSuccess, toast }) {
           </div>
           <span className="otp-timer">{timerSecs > 0 ? `Expires in ${timerDisplay}` : "Code expired"}</span>
           <button type="button" className="otp-resend" onClick={handleResend}>Didn't receive it? Resend code</button>
-          <button className="btn-primary" type="submit" disabled={loading} style={{ marginTop: 20 }}>{loading ? "Verifying…" : "Verify & Continue →"}</button>
+          <button className="btn-primary" type="submit" disabled={loading} style={{ marginTop: 20 }}>
+            {loading ? "Verifying…" : "Verify & Complete Registration →"}
+          </button>
         </form>
       )}
     </div>
@@ -786,10 +818,20 @@ function RegisterView({ onSwitch, onSuccess, toast }) {
 
 /* ─────────────────────────────────────────────────────────────────
    LOGIN
+   CHANGE: Accepts optional `registeredUsername` prop to show a
+           success banner and pre-fill the username field.
 ──────────────────────────────────────────────────────────────────*/
-function LoginView({ onSwitch, onSuccess, toast }) {
-  const [username, setUsername] = useState("");
+function LoginView({ onSwitch, onSuccess, toast, registeredUsername }) {
+  const [username, setUsername] = useState(registeredUsername || "");
   const [password, setPassword] = useState("");
+
+  // Clear fields on mount so browser-saved credentials never show up after sign-out
+  useEffect(() => {
+    if (!registeredUsername) {
+      setUsername("");
+    }
+    setPassword("");
+  }, []);
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState("");
@@ -818,25 +860,56 @@ function LoginView({ onSwitch, onSuccess, toast }) {
       <div className="form-title">Welcome back</div>
       <p className="form-sub">New to Ragsy? <button onClick={() => onSwitch("register")}>Create a free account →</button></p>
 
+      {/* ── Registration success banner (shown only after registering) ── */}
+      {registeredUsername && (
+        <div className="success-box">
+          <span className="success-box-icon">🎉</span>
+          <div className="success-box-text">
+            <span className="success-box-title">Account created successfully!</span>
+            <span className="success-box-sub">
+              Welcome, <strong>{registeredUsername}</strong>! Please sign in with your new credentials to continue.
+            </span>
+          </div>
+        </div>
+      )}
+
       {error && <div className="err-box">{error}</div>}
 
-      <form onSubmit={handleLogin}>
+      <form onSubmit={handleLogin} autoComplete="off">
         <div className="field">
           <div className="flabel">Username</div>
           <div className="inp-wrap">
             <span className="inp-icon"><IconUser /></span>
-            <input value={username} onChange={e => setUsername(e.target.value)} placeholder="your_handle" autoComplete="username" />
+            <input
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+              placeholder="your_handle"
+              autoComplete="off"
+              name="ragsy-username"
+            />
           </div>
         </div>
         <div className="field">
           <div className="flabel">Password</div>
           <div className="inp-wrap">
             <span className="inp-icon"><IconLock /></span>
-            <input type={showPass ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" autoComplete="current-password" />
-            <button type="button" className="inp-toggle" onClick={() => setShowPass(p => !p)}>{showPass ? "hide" : "show"}</button>
+            <input
+              type={showPass ? "text" : "password"}
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              placeholder="••••••••"
+              autoComplete="new-password"
+              name="ragsy-password"
+              autoFocus={!!registeredUsername}
+            />
+            <button type="button" className="inp-toggle" onClick={() => setShowPass(p => !p)}>
+              {showPass ? "hide" : "show"}
+            </button>
           </div>
         </div>
-        <button className="btn-primary" type="submit" disabled={loading}>{loading ? "Signing in…" : "Sign In →"}</button>
+        <button className="btn-primary" type="submit" disabled={loading}>
+          {loading ? "Signing in…" : "Sign In →"}
+        </button>
       </form>
 
       <div className="or-div">or</div>
@@ -846,10 +919,7 @@ function LoginView({ onSwitch, onSuccess, toast }) {
 }
 
 /* ─────────────────────────────────────────────────────────────────
-   OTP LOGIN  (phone → send OTP → verify → login)
-   Note: backend has no dedicated "otp login" route.
-   We use register flow but allow already-registered users to re-verify.
-   In practice: user enters mobile → get resend-otp → verify → we fetch /auth/me
+   OTP LOGIN
 ──────────────────────────────────────────────────────────────────*/
 function OtpLoginView({ onSwitch, onSuccess, toast }) {
   const [phase, setPhase]       = useState(1);
@@ -977,15 +1047,34 @@ function OtpLoginView({ onSwitch, onSuccess, toast }) {
 
 /* ─────────────────────────────────────────────────────────────────
    AUTH PAGE
+   CHANGE: Default view is now "login" (not "register").
+           Handles onRegistered callback to switch view + pass username.
 ──────────────────────────────────────────────────────────────────*/
 function AuthPage({ onAuth }) {
-  const [view, setView] = useState("register");
+  // ── START on login page ──
+  const [view, setView] = useState("login");
+  // stores username after successful registration so login can show the banner
+  const [registeredUsername, setRegisteredUsername] = useState(null);
   const [toast, fireToast] = useToast();
 
-  function handleSuccess(token, user) {
+  // Called after OTP verified during registration — redirect to login
+  function handleRegistered(username) {
+    setRegisteredUsername(username);
+    setView("login");
+    fireToast("ok", "Account created! Please sign in to continue 🎉");
+  }
+
+  // Called after successful login
+  function handleLoginSuccess(token, user) {
     localStorage.setItem("ragsy_token", token);
     localStorage.setItem("ragsy_user", JSON.stringify(user));
     onAuth(token, user);
+  }
+
+  // When user manually switches to register, clear the banner
+  function handleSwitch(target) {
+    if (target !== "login") setRegisteredUsername(null);
+    setView(target);
   }
 
   return (
@@ -993,54 +1082,32 @@ function AuthPage({ onAuth }) {
       <style>{STYLES}</style>
       <Toast {...toast} />
 
-      {/* LEFT */}
-      <div className="auth-left">
-        <div className="mesh" />
-        <svg className="arch-lines" viewBox="0 0 700 480" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <line x1="140" y1="120" x2="350" y2="200" stroke="#00C8A8" strokeWidth="1" opacity=".18"/>
-          <line x1="350" y1="200" x2="560" y2="140" stroke="#00C8A8" strokeWidth="1" opacity=".18"/>
-          <line x1="350" y1="200" x2="350" y2="340" stroke="#00C8A8" strokeWidth="1" opacity=".18"/>
-          <line x1="350" y1="340" x2="180" y2="420" stroke="#00C8A8" strokeWidth="1" opacity=".12"/>
-          <line x1="350" y1="340" x2="520" y2="420" stroke="#00C8A8" strokeWidth="1" opacity=".12"/>
-          <circle r="3" fill="#00C8A8" opacity=".6">
-            <animateMotion dur="4s" repeatCount="indefinite" path="M140,120 L350,200"/>
-            <animate attributeName="opacity" values=".6;0;.6" dur="4s" repeatCount="indefinite"/>
-          </circle>
-          <circle r="3" fill="#00C8A8" opacity=".6">
-            <animateMotion dur="3.5s" repeatCount="indefinite" begin="1s" path="M350,200 L560,140"/>
-            <animate attributeName="opacity" values=".6;0;.6" dur="3.5s" repeatCount="indefinite" begin="1s"/>
-          </circle>
-          <g opacity=".25">
-            <rect x="300" y="174" width="100" height="52" rx="6" fill="#00C8A8" fillOpacity=".15" stroke="#00C8A8" strokeWidth="1.2"/>
-            <text x="350" y="203" textAnchor="middle" fill="#00C8A8" fontSize="11" fontFamily="DM Mono,monospace">USERS</text>
-            <rect x="76" y="96" width="128" height="48" rx="5" fill="#0080CC" fillOpacity=".08" stroke="#3A5068" strokeWidth="1"/>
-            <text x="140" y="124" textAnchor="middle" fill="#6BA8D0" fontSize="9" fontFamily="DM Mono,monospace">OTP_VERIFY</text>
-            <rect x="506" y="114" width="120" height="48" rx="5" fill="#0080CC" fillOpacity=".08" stroke="#3A5068" strokeWidth="1"/>
-            <text x="566" y="142" textAnchor="middle" fill="#6BA8D0" fontSize="9" fontFamily="DM Mono,monospace">FLOWCHARTS</text>
-            <rect x="462" y="396" width="118" height="44" rx="5" fill="#0080CC" fillOpacity=".08" stroke="#3A5068" strokeWidth="1"/>
-            <text x="521" y="422" textAnchor="middle" fill="#6BA8D0" fontSize="9" fontFamily="DM Mono,monospace">CODE_SUBMISSIONS</text>
-          </g>
-        </svg>
+      <AuthLeft />
 
-        <Wordmark />
-        <div className="left-hero">
-          <div className="eyebrow">Code to Architecture</div>
-          <h1 className="hero-h">Turn your<br />code into<br /><em>living diagrams.</em></h1>
-          <p className="hero-p">Paste any Python code and Ragsy automatically generates interactive flowcharts and detailed explanations — instantly.</p>
-          <div className="chips">
-            <div className="chip"><div className="chip-dot" />Interactive flowcharts</div>
-            <div className="chip"><div className="chip-dot" />Mobile OTP auth</div>
-            <div className="chip"><div className="chip-dot" />AST-powered</div>
-            <div className="chip"><div className="chip-dot" />Export ready</div>
-          </div>
-        </div>
-      </div>
-
-      {/* RIGHT */}
       <div className="auth-right">
-        {view === "register"  && <RegisterView  onSwitch={setView} onSuccess={handleSuccess} toast={fireToast} />}
-        {view === "login"     && <LoginView     onSwitch={setView} onSuccess={handleSuccess} toast={fireToast} />}
-        {view === "otp-login" && <OtpLoginView  onSwitch={setView} onSuccess={handleSuccess} toast={fireToast} />}
+        {view === "register"  && (
+          <RegisterView
+            onSwitch={handleSwitch}
+            onRegistered={handleRegistered}
+            toast={fireToast}
+          />
+        )}
+        {view === "login" && (
+          <LoginView
+            key={registeredUsername || "login-fresh"}
+            onSwitch={handleSwitch}
+            onSuccess={handleLoginSuccess}
+            toast={fireToast}
+            registeredUsername={registeredUsername}
+          />
+        )}
+        {view === "otp-login" && (
+          <OtpLoginView
+            onSwitch={handleSwitch}
+            onSuccess={handleLoginSuccess}
+            toast={fireToast}
+          />
+        )}
       </div>
     </div>
   );
@@ -1087,86 +1154,56 @@ function DashboardPage({ user, onNavigate, onSignOut }) {
 
 /* ─────────────────────────────────────────────────────────────────
    CUSTOM REACT FLOW NODE TYPES
-   Diamond  → decision (if / elif / for / while)
-   Parallelogram → I/O (print / input)
 ──────────────────────────────────────────────────────────────────*/
-
-// ── Diamond node ─────────────────────────────────────────────────
 function DiamondNode({ data }) {
   const color = data.color || "#fca5a5";
   const bg    = data.bg    || "#7f1d1d";
-  const size  = 110;          // half-width of diamond
-  const h     = 70;           // half-height
+  const size  = 110;
+  const h     = 70;
   const W     = size * 2 + 40;
   const H     = h    * 2 + 20;
-  // diamond polygon in the SVG coordinate space
   const pts   = `${W/2},4 ${W-4},${H/2} ${W/2},${H-4} 4,${H/2}`;
   return (
     <div style={{ position: "relative", width: W, height: H }}>
-      <Handle type="target" position={Position.Top}
-        style={{ top: 0, left: "50%", background: color, border: "none" }} />
+      <Handle type="target" position={Position.Top} style={{ top: 0, left: "50%", background: color, border: "none" }} />
       <svg width={W} height={H} style={{ position: "absolute", inset: 0 }}>
-        <defs>
-          <filter id={`glow-${data.label?.slice(0,4)}`}>
-            <feGaussianBlur stdDeviation="3" result="blur"/>
-            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-          </filter>
-        </defs>
-        <polygon points={pts} fill={bg} stroke={color} strokeWidth="2"
-          filter={`url(#glow-${data.label?.slice(0,4)})`}
-          style={{ filter: `drop-shadow(0 0 8px ${color}88)` }} />
+        <polygon points={pts} fill={bg} stroke={color} strokeWidth="2" style={{ filter: `drop-shadow(0 0 8px ${color}88)` }} />
       </svg>
       <div style={{
         position: "absolute", inset: 0,
         display: "flex", alignItems: "center", justifyContent: "center",
         padding: "8px 24px", textAlign: "center",
         fontFamily: "'Fira Code', monospace", fontSize: 11,
-        color: "#fff", wordBreak: "break-word", lineHeight: 1.4,
-        pointerEvents: "none",
+        color: "#fff", wordBreak: "break-word", lineHeight: 1.4, pointerEvents: "none",
       }}>
         {data.label}
       </div>
-      <Handle type="source" position={Position.Bottom}
-        style={{ bottom: 0, left: "50%", background: color, border: "none" }} />
-      <Handle type="source" id="right" position={Position.Right}
-        style={{ right: 0, top: "50%", background: color, border: "none" }} />
+      <Handle type="source" position={Position.Bottom} style={{ bottom: 0, left: "50%", background: color, border: "none" }} />
+      <Handle type="source" id="right" position={Position.Right} style={{ right: 0, top: "50%", background: color, border: "none" }} />
     </div>
   );
 }
 
-// ── Parallelogram node (I/O) ──────────────────────────────────────
 function ParallelogramNode({ data }) {
   const color = data.color || "#60a5fa";
   const bg    = data.bg    || "#1e3a5f";
   return (
     <div style={{
-      position: "relative",
-      background: bg,
-      border: `2px solid ${color}`,
-      borderRadius: 4,
-      padding: "10px 20px",
-      minWidth: 180,
-      maxWidth: 260,
-      transform: "skewX(-10deg)",
-      boxShadow: `0 0 14px ${color}44`,
-      fontFamily: "'Fira Code', monospace",
-      fontSize: 12, color: "#fff",
+      position: "relative", background: bg, border: `2px solid ${color}`,
+      borderRadius: 4, padding: "10px 20px", minWidth: 180, maxWidth: 260,
+      transform: "skewX(-10deg)", boxShadow: `0 0 14px ${color}44`,
+      fontFamily: "'Fira Code', monospace", fontSize: 12, color: "#fff",
       textAlign: "center", wordBreak: "break-word",
     }}>
-      <Handle type="target" position={Position.Top}
-        style={{ background: color, border: "none", top: -1 }} />
+      <Handle type="target" position={Position.Top} style={{ background: color, border: "none", top: -1 }} />
       <div style={{ transform: "skewX(10deg)" }}>{data.label}</div>
-      <Handle type="source" position={Position.Bottom}
-        style={{ background: color, border: "none", bottom: -1 }} />
+      <Handle type="source" position={Position.Bottom} style={{ background: color, border: "none", bottom: -1 }} />
     </div>
   );
 }
 
 const NODE_TYPES = { diamond: DiamondNode, parallelogram: ParallelogramNode };
 
-/* ─────────────────────────────────────────────────────────────────
-   REACT FLOW DIAGRAM
-──────────────────────────────────────────────────────────────────*/
 function FlowDiagram({ nodes: initNodes, edges: initEdges }) {
   const [nodes, , onNodesChange] = useNodesState(initNodes);
   const [edges, , onEdgesChange] = useEdgesState(initEdges);
@@ -1219,8 +1256,6 @@ for i, a in enumerate(areas):
     print(f"  Circle {i+1}: area = {a:.4f}")
 `;
 
-// ── Plain-English Explanation renderer ───────────────────────────
-// Backend now returns [{title, body}] array instead of raw text
 function ExplanationView({ explanation }) {
   if (!explanation || !Array.isArray(explanation) || explanation.length === 0) {
     return <div style={{ color: "var(--fog)", fontSize: 13 }}>No explanation available.</div>;
@@ -1244,19 +1279,12 @@ function ExplanationView({ explanation }) {
             borderLeft: `3px solid ${accent}`,
             borderRadius: 10, padding: "14px 18px",
           }}>
-            <div style={{
-              fontFamily: "var(--mono)", fontSize: 11, letterSpacing: ".1em",
-              color: accent, marginBottom: 10, fontWeight: 600,
-            }}>
+            <div style={{ fontFamily: "var(--mono)", fontSize: 11, letterSpacing: ".1em", color: accent, marginBottom: 10, fontWeight: 600 }}>
               {sec.title}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {steps.map((line, li) => (
-                <div key={li} style={{
-                  fontSize: 13.5, color: "var(--cloud)", lineHeight: 1.7,
-                  fontFamily: "var(--body)",
-                  paddingLeft: line.startsWith("Step") || line.startsWith("•") ? 0 : 0,
-                }}>
+                <div key={li} style={{ fontSize: 13.5, color: "var(--cloud)", lineHeight: 1.7, fontFamily: "var(--body)" }}>
                   {line}
                 </div>
               ))}
@@ -1268,7 +1296,6 @@ function ExplanationView({ explanation }) {
   );
 }
 
-// ── Console output renderer ───────────────────────────────────────
 function ConsoleView({ console: con, isRunning }) {
   if (isRunning) {
     return (
@@ -1282,96 +1309,40 @@ function ConsoleView({ console: con, isRunning }) {
     <div className="out-empty" style={{ height: 200 }}>
       <div className="out-empty-icon">▶</div>
       <div className="out-empty-h">Not run yet</div>
-      <p className="out-empty-p">Click the <strong style={{ color: "var(--teal)" }}>▶ Run Code</strong> button to execute and see output here.</p>
+      <p className="out-empty-p">Click the <strong style={{ color: "var(--teal)" }}>Run Code</strong> button to execute and see output here.</p>
     </div>
   );
 
   const statusColor = { success: "var(--teal)", error: "var(--red)", exited: "var(--gold)" }[con.status] || "var(--silver)";
   const statusLabel = { success: "✓ Executed successfully", error: "✕ Runtime error", exited: "⚠ Exited" }[con.status] || con.status;
-  const hasInputs   = con.auto_inputs && con.auto_inputs.length > 0;
+  const isEmpty = !con.stdout.trim() && !con.stderr.trim();
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-
-      {/* Status bar */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
         background: "var(--ink3)", border: `1px solid ${statusColor}44`,
         borderRadius: 8, padding: "8px 14px",
       }}>
-        <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: statusColor, letterSpacing: ".06em", fontWeight: 600 }}>
-          {statusLabel}
-        </span>
+        <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: statusColor, letterSpacing: ".06em", fontWeight: 600 }}>{statusLabel}</span>
         <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--fog)" }}>{con.elapsed_ms}ms</span>
       </div>
-
-      {/* Auto-filled inputs info — shown only when input() was used */}
-      {hasInputs && (
-        <div style={{
-          background: "rgba(240,165,0,.05)", border: "1px solid rgba(240,165,0,.25)",
-          borderRadius: 8, padding: "10px 14px",
-        }}>
-          <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--gold)", letterSpacing: ".1em", marginBottom: 8, textTransform: "uppercase" }}>
-            📥 Auto-filled input() values
-          </div>
-          {con.auto_inputs.map((inp, i) => (
-            <div key={i} style={{ display: "flex", gap: 8, fontSize: 12, marginBottom: 5, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ color: "var(--fog)", fontFamily: "var(--mono)", fontSize: 11, flexShrink: 0 }}>
-                {(inp.prompt || "(no prompt)").replace(/:\s*$/, "") + ":"}
-              </span>
-              <span style={{
-                fontFamily: "var(--mono)", fontSize: 12, color: "var(--gold)",
-                background: "rgba(240,165,0,.12)", border: "1px solid rgba(240,165,0,.25)",
-                borderRadius: 4, padding: "1px 8px",
-              }}>"{inp.auto_value}"</span>
-            </div>
-          ))}
-          <div style={{ fontSize: 11, color: "var(--fog)", marginTop: 8, lineHeight: 1.6, borderTop: "1px solid rgba(240,165,0,.15)", paddingTop: 8 }}>
-            ℹ️ Since code runs without a live terminal, <code style={{ fontFamily: "var(--mono)", color: "var(--teal)", fontSize: 11 }}>input()</code> values are automatically detected from your code and filled in.
-          </div>
-        </div>
-      )}
-
-      {/* STDOUT */}
       <div style={{ background: "#080b12", border: "1px solid var(--line2)", borderRadius: 8, overflow: "hidden" }}>
-        <div style={{
-          padding: "5px 14px", borderBottom: "1px solid var(--line2)",
-          fontFamily: "var(--mono)", fontSize: 9, letterSpacing: ".16em",
-          textTransform: "uppercase", color: "var(--teal)", background: "var(--ink3)",
-          display: "flex", alignItems: "center", gap: 6,
-        }}>
+        <div style={{ padding: "5px 14px", borderBottom: "1px solid var(--line2)", fontFamily: "var(--mono)", fontSize: 9, letterSpacing: ".16em", textTransform: "uppercase", color: "var(--teal)", background: "var(--ink3)", display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#34d399", display: "inline-block" }} />
-          STDOUT — Program Output
+          STDOUT
         </div>
-        <pre style={{
-          margin: 0, padding: "16px 20px",
-          fontFamily: "'Fira Code', var(--mono)", fontSize: 13, lineHeight: 1.85,
-          color: con.stdout.trim() ? "#b8e8c8" : "var(--mist)",
-          minHeight: 80, maxHeight: 360, overflowY: "auto",
-          whiteSpace: "pre-wrap", wordBreak: "break-all",
-        }}>
+        <pre style={{ margin: 0, padding: "16px 20px", fontFamily: "'Fira Code', var(--mono)", fontSize: 13, lineHeight: 1.85, color: isEmpty ? "var(--mist)" : "#b8e8c8", minHeight: 80, maxHeight: 320, overflowY: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
           {con.stdout.trim() || "(no output)"}
         </pre>
       </div>
-
-      {/* STDERR — only when there's content */}
-      {con.stderr && con.stderr.trim() && (
+      {con.stderr.trim() && (
         <div style={{ background: "#0f0609", border: "1px solid rgba(224,80,80,.35)", borderRadius: 8, overflow: "hidden" }}>
-          <div style={{
-            padding: "5px 14px", borderBottom: "1px solid rgba(224,80,80,.2)",
-            fontFamily: "var(--mono)", fontSize: 9, letterSpacing: ".16em",
-            textTransform: "uppercase", color: "var(--red)", background: "var(--ink3)",
-            display: "flex", alignItems: "center", gap: 6,
-          }}>
+          <div style={{ padding: "5px 14px", borderBottom: "1px solid rgba(224,80,80,.2)", fontFamily: "var(--mono)", fontSize: 9, letterSpacing: ".16em", textTransform: "uppercase", color: "var(--red)", background: "var(--ink3)", display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--red)", display: "inline-block" }} />
             STDERR / TRACEBACK
           </div>
-          <pre style={{
-            margin: 0, padding: "14px 18px",
-            fontFamily: "'Fira Code', var(--mono)", fontSize: 12, lineHeight: 1.75,
-            color: "#e8a0a0", maxHeight: 300, overflowY: "auto",
-            whiteSpace: "pre-wrap", wordBreak: "break-all",
-          }}>
+          <pre style={{ margin: 0, padding: "14px 18px", fontFamily: "'Fira Code', var(--mono)", fontSize: 12, lineHeight: 1.75, color: "#e8a0a0", maxHeight: 260, overflowY: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
             {con.stderr.trim()}
           </pre>
         </div>
@@ -1380,105 +1351,16 @@ function ConsoleView({ console: con, isRunning }) {
   );
 }
 
-
-/* ─────────────────────────────────────────────────────────────────
-   INPUT MODAL — shown when code has input() calls
-   User fills in values before execution
-──────────────────────────────────────────────────────────────────*/
-function InputModal({ prompts, values, onChange, onRun, onCancel }) {
-  return (
-    <div style={{
-      position:"fixed",inset:0,background:"rgba(0,0,0,.75)",
-      zIndex:999,display:"flex",alignItems:"center",justifyContent:"center",
-      backdropFilter:"blur(4px)",animation:"pg .25s ease",
-    }}>
-      <div style={{
-        background:"var(--ink2)",border:"1px solid var(--teal)",
-        borderRadius:14,padding:"28px 32px",width:"100%",maxWidth:440,
-        boxShadow:"0 24px 80px rgba(0,0,0,.6)",
-      }}>
-        {/* Header */}
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
-          <div style={{fontSize:22}}>⌨️</div>
-          <div style={{fontFamily:"var(--disp)",fontSize:20,fontWeight:800,letterSpacing:"-.02em"}}>
-            Program needs input
-          </div>
-        </div>
-        <p style={{fontSize:13,color:"var(--fog)",marginBottom:22,lineHeight:1.6}}>
-          Your code calls <code style={{fontFamily:"var(--mono)",color:"var(--teal)",background:"var(--ink3)",padding:"1px 6px",borderRadius:4}}>input()</code> {prompts.length} time{prompts.length>1?"s":""}.
-          Enter the values below — they will be fed into the program in order.
-        </p>
-
-        {/* Input fields */}
-        <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:24}}>
-          {prompts.map((p, i) => (
-            <div key={i}>
-              <div style={{
-                fontSize:11,fontFamily:"var(--mono)",color:"var(--silver)",
-                marginBottom:6,letterSpacing:".06em",
-              }}>
-                Input {i+1}{p.prompt ? ` — "${p.prompt}"` : ""}
-              </div>
-              <input
-                type="text"
-                value={values[i] || ""}
-                onChange={e => onChange(i, e.target.value)}
-                onKeyDown={e => { if(e.key==="Enter" && i===prompts.length-1) onRun(values); }}
-                placeholder={p.prompt || `Enter value ${i+1}…`}
-                autoFocus={i===0}
-                style={{
-                  width:"100%",background:"var(--ink3)",
-                  border:"1px solid var(--line2)",borderRadius:8,
-                  color:"var(--white)",fontSize:14,fontFamily:"var(--mono)",
-                  padding:"11px 14px",outline:"none",
-                  transition:"border-color .2s",
-                }}
-                onFocus={e=>e.target.style.borderColor="var(--teal)"}
-                onBlur={e=>e.target.style.borderColor="var(--line2)"}
-              />
-            </div>
-          ))}
-        </div>
-
-        {/* Buttons */}
-        <div style={{display:"flex",gap:10}}>
-          <button onClick={onCancel} style={{
-            flex:1,padding:"11px 0",background:"transparent",
-            border:"1px solid var(--line2)",borderRadius:8,
-            color:"var(--silver)",fontSize:13,fontWeight:500,cursor:"pointer",
-          }}>
-            Cancel
-          </button>
-          <button onClick={() => onRun(values)} style={{
-            flex:2,padding:"11px 0",background:"var(--teal)",
-            border:"none",borderRadius:8,color:"var(--ink)",
-            fontSize:13,fontWeight:700,cursor:"pointer",
-            boxShadow:"0 4px 20px var(--teal-glow)",
-          }}>
-            ▶ Run with these values
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function EditorPage({ user, token, onBack, onSignOut }) {
-  const [code, setCode]           = useState("");
+  const [code, setCode]                     = useState("");
   const [loadingDiagram, setLoadingDiagram] = useState(false);
   const [loadingRun, setLoadingRun]         = useState(false);
-  const [result, setResult]       = useState(null);   // diagram + explanation
-  const [consoleOut, setConsoleOut] = useState(null); // execution result
-  const [activeTab, setTab]       = useState("diagram");
-  const [error, setError]         = useState("");
-  const [toast, fireToast]        = useToast();
+  const [result, setResult]                 = useState(null);
+  const [consoleOut, setConsoleOut]         = useState(null);
+  const [activeTab, setTab]                 = useState("diagram");
+  const [error, setError]                   = useState("");
+  const [toast, fireToast]                  = useToast();
   const taRef = useRef(null);
-
-  // Input modal state
-  const [inputPrompts,   setInputPrompts]   = useState([]);
-  const [inputValues,    setInputValues]    = useState([]);
-  const [showInputModal, setShowInputModal] = useState(false);
-  const [scanningInputs, setScanningInputs] = useState(false);
 
   const lineCount = Math.max(1, code.split("\n").length);
   const lineNums  = Array.from({ length: lineCount }, (_, i) => i + 1);
@@ -1488,7 +1370,6 @@ function EditorPage({ user, token, onBack, onSignOut }) {
     if (ln) ln.scrollTop = e.target.scrollTop;
   }
 
-  // ── Generate Flowchart + Explanation ──────────────────────────
   async function handleGenerate() {
     if (!code.trim()) return fireToast("err", "Please paste some Python code first");
     setLoadingDiagram(true); setResult(null); setError(""); setConsoleOut(null);
@@ -1508,41 +1389,20 @@ function EditorPage({ user, token, onBack, onSignOut }) {
     }
   }
 
-  // ── Run Code: scan for input() first, show dialog if needed ───
   async function handleRun() {
     if (!code.trim()) return fireToast("err", "Please paste some Python code first");
-    setScanningInputs(true);
-    try {
-      const scan = await apiFetch(`/scan-inputs?token=${token}`, {
-        method: "POST",
-        body: JSON.stringify({ code, user_inputs: [] }),
-      });
-      const prompts = scan.inputs || [];
-      if (prompts.length > 0) {
-        setInputPrompts(prompts);
-        setInputValues(prompts.map(() => ""));
-        setShowInputModal(true);
-      } else {
-        await executeCode([]);
-      }
-    } catch (_) {
-      await executeCode([]);
-    } finally {
-      setScanningInputs(false);
-    }
-  }
-
-  async function executeCode(values) {
-    setShowInputModal(false);
     setLoadingRun(true); setTab("console");
     try {
       const data = await apiFetch(`/run?token=${token}`, {
         method: "POST",
-        body: JSON.stringify({ code, user_inputs: values }),
+        body: JSON.stringify({ code }),
       });
       setConsoleOut(data);
-      fireToast(data.status === "error" ? "err" : "ok",
-        data.status === "error" ? "Runtime error — check Console" : `Done in ${data.elapsed_ms}ms`);
+      if (data.status === "error") {
+        fireToast("err", "Code ran with errors — check Console tab");
+      } else {
+        fireToast("ok", `Executed in ${data.elapsed_ms}ms`);
+      }
     } catch (err) {
       fireToast("err", err.message);
     } finally {
@@ -1565,31 +1425,15 @@ function EditorPage({ user, token, onBack, onSignOut }) {
       <Toast {...toast} />
       <NavBar user={user} section="Python" tealSection onLogoClick={onBack} onSignOut={onSignOut} />
 
-      {/* ── Input Values Modal ── */}
-      {showInputModal && (
-        <InputModal
-          prompts={inputPrompts}
-          values={inputValues}
-          onChange={(i, val) => setInputValues(prev => { const n=[...prev]; n[i]=val; return n; })}
-          onRun={vals => executeCode(vals)}
-          onCancel={() => setShowInputModal(false)}
-        />
-      )}
-
       <div className="editor-body">
-        {/* ── INPUT PANEL ── */}
         <div className="editor-panel">
           <div className="panel-hdr">
-            <div className="panel-title">
-              <div className="ptitle-dot" />
-              Python Source Code
-            </div>
+            <div className="panel-title"><div className="ptitle-dot" />Python Source Code</div>
             <div className="panel-actions">
               <button className="panel-btn" onClick={() => setCode(SAMPLE)}>Load Sample</button>
               <button className="panel-btn" onClick={() => { setCode(""); setResult(null); setConsoleOut(null); setError(""); }}>Clear</button>
             </div>
           </div>
-
           <div className="editor-wrap">
             <div className="line-nums" style={{ overflowY: "hidden" }}>
               {lineNums.map(n => <div key={n} className="line-num">{n}</div>)}
@@ -1604,68 +1448,42 @@ function EditorPage({ user, token, onBack, onSignOut }) {
               spellCheck={false}
             />
           </div>
-
-          {/* ── Two-button run bar ── */}
           <div className="run-bar">
             <div className="run-info">Language: <span>Python</span> · AST-powered</div>
             <div style={{ display: "flex", gap: 8 }}>
-              {/* RUN CODE button — executes only */}
               <button
                 style={{
                   display: "flex", alignItems: "center", gap: 7,
-                  background: "transparent",
-                  color: loadingRun ? "var(--fog)" : "var(--teal)",
-                  border: "1px solid var(--teal)",
-                  borderRadius: 7, fontSize: 13, fontWeight: 600,
-                  padding: "9px 16px", cursor: "pointer",
-                  transition: "background .2s, box-shadow .2s",
-                  opacity: loadingRun ? .6 : 1,
+                  background: "transparent", color: loadingRun ? "var(--fog)" : "var(--teal)",
+                  border: "1px solid var(--teal)", borderRadius: 7, fontSize: 13, fontWeight: 600,
+                  padding: "9px 16px", cursor: "pointer", opacity: loadingRun ? .6 : 1,
                 }}
                 onClick={handleRun}
-                disabled={loadingRun || loadingDiagram || scanningInputs}
+                disabled={loadingRun || loadingDiagram}
               >
-                {scanningInputs
-                  ? <><div className="loader" style={{ width: 13, height: 13 }} /> Scanning…</>
-                  : loadingRun
-                  ? <><div className="loader" style={{ width: 13, height: 13 }} /> Running…</>
-                  : <>▶ Run Code</>
-                }
+                {loadingRun ? <><div className="loader" style={{ width: 13, height: 13 }} /> Running…</> : <>▶ Run Code</>}
               </button>
-
-              {/* GENERATE FLOWCHART button */}
-              <button
-                className="btn-run"
-                onClick={handleGenerate}
-                disabled={loadingDiagram || loadingRun}
-              >
-                {loadingDiagram
-                  ? <><div className="loader" style={{ width: 13, height: 13 }} /> Generating…</>
-                  : <><IconPlay /> Generate Flowchart</>
-                }
+              <button className="btn-run" onClick={handleGenerate} disabled={loadingDiagram || loadingRun}>
+                {loadingDiagram ? <><div className="loader" style={{ width: 13, height: 13 }} /> Generating…</> : <><IconPlay /> Generate Flowchart</>}
               </button>
             </div>
           </div>
         </div>
 
-        {/* ── OUTPUT PANEL ── */}
         <div className="output-panel">
           {(result || consoleOut) ? (
             <div className="out-tabs">
               {TABS.map(t => (
-                <button key={t.id}
-                  className={`out-tab ${activeTab === t.id ? "active" : ""}`}
-                  onClick={() => setTab(t.id)}>
+                <button key={t.id} className={`out-tab ${activeTab === t.id ? "active" : ""}`} onClick={() => setTab(t.id)}>
                   {t.icon} {t.label}
                   {t.badge && (
                     <span style={{
                       marginLeft: 6, fontSize: 9, fontFamily: "var(--mono)",
                       background: t.badgeOk ? "rgba(0,200,168,.2)" : "rgba(224,80,80,.25)",
-                      color:      t.badgeOk ? "var(--teal)" : "var(--red)",
-                      border:     `1px solid ${t.badgeOk ? "rgba(0,200,168,.4)" : "rgba(224,80,80,.4)"}`,
+                      color: t.badgeOk ? "var(--teal)" : "var(--red)",
+                      border: `1px solid ${t.badgeOk ? "rgba(0,200,168,.4)" : "rgba(224,80,80,.4)"}`,
                       borderRadius: 20, padding: "1px 6px", letterSpacing: ".04em",
-                    }}>
-                      {t.badge}
-                    </span>
+                    }}>{t.badge}</span>
                   )}
                 </button>
               ))}
@@ -1680,7 +1498,6 @@ function EditorPage({ user, token, onBack, onSignOut }) {
           )}
 
           <div className="out-content">
-            {/* Empty state */}
             {!result && !consoleOut && !loadingDiagram && !loadingRun && !error && (
               <div className="out-empty">
                 <div className="out-empty-icon">⬡</div>
@@ -1691,27 +1508,18 @@ function EditorPage({ user, token, onBack, onSignOut }) {
                 </p>
               </div>
             )}
-
-            {/* Diagram loading */}
             {loadingDiagram && (
               <div className="out-loading">
                 <div className="loader" />
                 <div className="loader-msg">Parsing AST & building flowchart…</div>
               </div>
             )}
-
-            {/* Error */}
             {error && !loadingDiagram && (
-              <div style={{ padding: 20 }}>
-                <div className="err-box" style={{ display: "block" }}>{error}</div>
-              </div>
+              <div style={{ padding: 20 }}><div className="err-box" style={{ display: "block" }}>{error}</div></div>
             )}
-
-            {/* ── FLOWCHART TAB ── */}
             {activeTab === "diagram" && result && !loadingDiagram && (
               <div>
                 <div className="sect-lbl">Interactive Flowchart</div>
-                {/* Legend */}
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
                   {[
                     { color: "#fca5a5", shape: "◇", label: "Decision (if/elif)" },
@@ -1720,14 +1528,8 @@ function EditorPage({ user, token, onBack, onSignOut }) {
                     { color: "#a78bfa", shape: "□", label: "Function" },
                     { color: "#38bdf8", shape: "□", label: "Process / Assign" },
                   ].map(l => (
-                    <div key={l.label} style={{
-                      display: "flex", alignItems: "center", gap: 5,
-                      fontSize: 10, color: "var(--silver)", fontFamily: "var(--mono)",
-                      background: "var(--ink3)", border: `1px solid ${l.color}44`,
-                      borderRadius: 5, padding: "3px 8px",
-                    }}>
-                      <span style={{ color: l.color, fontSize: 11 }}>{l.shape}</span>
-                      {l.label}
+                    <div key={l.label} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, color: "var(--silver)", fontFamily: "var(--mono)", background: "var(--ink3)", border: `1px solid ${l.color}44`, borderRadius: 5, padding: "3px 8px" }}>
+                      <span style={{ color: l.color, fontSize: 11 }}>{l.shape}</span>{l.label}
                     </div>
                   ))}
                 </div>
@@ -1740,16 +1542,12 @@ function EditorPage({ user, token, onBack, onSignOut }) {
                 </div>
               </div>
             )}
-
-            {/* ── CONSOLE TAB ── */}
             {activeTab === "console" && (
               <div>
                 <div className="sect-lbl">Execution Output</div>
                 <ConsoleView console={consoleOut} isRunning={loadingRun} />
               </div>
             )}
-
-            {/* ── EXPLANATION TAB ── */}
             {activeTab === "explanation" && result && !loadingDiagram && (
               <div>
                 <div className="sect-lbl">Plain English Explanation</div>
@@ -1772,6 +1570,9 @@ function EditorPage({ user, token, onBack, onSignOut }) {
 
 /* ─────────────────────────────────────────────────────────────────
    ROOT APP
+   CHANGE: No auto-login on mount. Session restore only goes to
+           dashboard if token + user already exist (returning user).
+           New registrations always land on login first.
 ──────────────────────────────────────────────────────────────────*/
 export default function App() {
   const [page, setPage]   = useState("auth");
@@ -1780,7 +1581,7 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem("ragsy_user") || "null"); } catch { return null; }
   });
 
-  // Auto-restore session
+  // Only restore session for RETURNING users (already had a token saved)
   useEffect(() => {
     if (token && user) setPage("dashboard");
   }, []);

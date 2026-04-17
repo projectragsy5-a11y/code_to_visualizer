@@ -1,17 +1,267 @@
-"""Ragsy Backend v3 — All Python programs execute, OTP via Fast2SMS/Twilio"""
+"""Ragsy Backend v3 + SQL Server DB — All Python programs execute, OTP via Fast2SMS/Twilio"""
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
-import ast, random, string, sys, io, traceback, re
+import ast, random, string, sys, io, traceback, re, hashlib, json
 from datetime import datetime, timedelta
 import os, requests as http_requests
+import pyodbc
 
-app = FastAPI(title="Ragsy API", version="3.0.0")
+# ══════════════════════════════════════════════════════════════════
+# SQL SERVER CONNECTION
+# Change DB_SERVER to your exact server name shown in SSMS login
+# ══════════════════════════════════════════════════════════════════
+DB_SERVER = os.getenv("DB_SERVER", r"RANJAN\RANJANBABU")   # <-- edit this
+DB_NAME   = os.getenv("DB_NAME",   "code_architecture_visualizer")
+
+def get_db():
+    """
+    Opens a pyodbc connection using Windows Authentication.
+    No username/password needed — uses your Windows login.
+    """
+    conn_str = (
+        f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+        f"SERVER={DB_SERVER};"
+        f"DATABASE={DB_NAME};"
+        f"Trusted_Connection=yes;"
+    )
+    return pyodbc.connect(conn_str)
+
+def test_db_connection():
+    """Runs at startup. Prints success or failure message."""
+    try:
+        conn = get_db()
+        cur  = conn.cursor()
+        cur.execute("SELECT @@VERSION")
+        ver  = cur.fetchone()[0].split("\n")[0]
+        conn.close()
+        print(f"[DB OK ] Connected → {ver}")
+        return True
+    except Exception as e:
+        print(f"[DB ERR] Connection FAILED: {e}")
+        print(f"         Server : {DB_SERVER}")
+        print(f"         DB     : {DB_NAME}")
+        print(f"         Fix    : Check server name matches SSMS login window")
+        return False
+
+def hash_pw(pw: str) -> str:
+    """SHA-256 — never store plain text passwords in DB."""
+    return hashlib.sha256(pw.encode()).hexdigest()
+
+# ══════════════════════════════════════════════════════════════════
+# DB HELPER FUNCTIONS — one per table, matching your ERD schema
+# ══════════════════════════════════════════════════════════════════
+
+# ── USERS table ───────────────────────────────────────────────────
+def db_user_create(username, mobile_no, pw_hash) -> int:
+    """INSERT user. Returns new user_id from DB."""
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO USERS (username, mobile_no, password, created_at) "
+            "OUTPUT INSERTED.user_id VALUES (?,?,?,?)",
+            username, mobile_no, pw_hash, datetime.utcnow()
+        )
+        uid = cur.fetchone()[0]
+        conn.commit()
+        return uid
+    finally:
+        conn.close()
+
+def db_user_by_mobile(mobile_no) -> dict | None:
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT user_id,username,mobile_no,password,created_at "
+            "FROM USERS WHERE mobile_no=?", mobile_no)
+        r = cur.fetchone()
+        if not r: return None
+        return {"user_id":r[0],"username":r[1],"mobile_no":r[2],
+                "password":r[3],"created_at":str(r[4])}
+    finally:
+        conn.close()
+
+def db_user_by_username(username) -> dict | None:
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT user_id,username,mobile_no,password "
+            "FROM USERS WHERE username=?", username)
+        r = cur.fetchone()
+        if not r: return None
+        return {"user_id":r[0],"username":r[1],"mobile_no":r[2],"password":r[3]}
+    finally:
+        conn.close()
+
+def db_user_by_id(uid) -> dict | None:
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT user_id,username,mobile_no FROM USERS WHERE user_id=?", uid)
+        r = cur.fetchone()
+        if not r: return None
+        return {"user_id":r[0],"username":r[1],"mobile_no":r[2]}
+    finally:
+        conn.close()
+
+# ── OTP_VERIFICATION table ────────────────────────────────────────
+def db_otp_upsert(user_id, otp_code, expiry_time):
+    """Delete existing OTP for user, then insert fresh one."""
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM OTP_VERIFICATION WHERE user_id=?", user_id)
+        cur.execute(
+            "INSERT INTO OTP_VERIFICATION (user_id,otp_code,expiry_time,status) "
+            "VALUES (?,?,?,'pending')",
+            user_id, otp_code, expiry_time
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+def db_otp_get(user_id) -> dict | None:
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT otp_id,user_id,otp_code,expiry_time,status "
+            "FROM OTP_VERIFICATION WHERE user_id=?", user_id)
+        r = cur.fetchone()
+        if not r: return None
+        return {"otp_id":r[0],"user_id":r[1],"otp_code":r[2],
+                "expiry_time":r[3],"status":r[4]}
+    finally:
+        conn.close()
+
+def db_otp_set_status(user_id, status):
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE OTP_VERIFICATION SET status=? WHERE user_id=?", status, user_id)
+        conn.commit()
+    finally:
+        conn.close()
+
+# ── CODE_SUBMISSIONS table ────────────────────────────────────────
+def db_submission_save(user_id, source_code, language) -> int:
+    """INSERT submission. Returns new code_id from DB."""
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO CODE_SUBMISSIONS (user_id,source_code,language,upload_time) "
+            "OUTPUT INSERTED.code_id VALUES (?,?,?,?)",
+            user_id, source_code, language, datetime.utcnow()
+        )
+        cid = cur.fetchone()[0]
+        conn.commit()
+        return cid
+    finally:
+        conn.close()
+
+def db_submissions_by_user(user_id) -> list:
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT code_id,source_code,language,upload_time FROM CODE_SUBMISSIONS "
+            "WHERE user_id=? ORDER BY upload_time DESC", user_id)
+        rows = cur.fetchall()
+        return [{"code_id":r[0],"source_code":r[1][:120]+"...","language":r[2],"upload_time":str(r[3])} for r in rows]
+    finally:
+        conn.close()
+
+# ── FLOWCHARTS table ──────────────────────────────────────────────
+def db_flowchart_save(code_id, diagram_json: str):
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO FLOWCHARTS (code_id,diagram_path,generated_time) VALUES (?,?,?)",
+            code_id, diagram_json, datetime.utcnow()
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+# ── EXPLANATIONS table ────────────────────────────────────────────
+def db_explanation_save(code_id, explanation_text: str):
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO EXPLANATIONS (code_id,file_path,download_count) VALUES (?,?,0)",
+            code_id, explanation_text
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+# ── USER_ACTIONS_LOG table ────────────────────────────────────────
+def db_action_log(user_id):
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO USER_ACTIONS_LOG (user_id,action_time) VALUES (?,?)",
+            user_id, datetime.utcnow()
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+# ── REPORTS table ─────────────────────────────────────────────────
+def db_report_save(user_id, action_type):
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO REPORTS (user_id,action_type,action_time) VALUES (?,?,?)",
+            user_id, action_type, datetime.utcnow()
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+def db_log(user_id, action_type):
+    """Write to USER_ACTIONS_LOG + REPORTS. Never crashes the API."""
+    try:
+        db_action_log(user_id)
+        db_report_save(user_id, action_type)
+    except Exception as e:
+        print(f"[DB LOG WARNING] {e}")
+
+# ── Session store (in-memory — no sessions table in your schema) ──
+sessions_db = {}   # token -> user_id
+
+def gen_token(user_id: int) -> str:
+    t = "".join(random.choices(string.ascii_letters + string.digits, k=32))
+    sessions_db[t] = user_id
+    return t
+
+def user_by_token(token: str) -> dict:
+    uid = sessions_db.get(token)
+    if not uid:
+        raise HTTPException(401, detail="Invalid or expired token")
+    user = db_user_by_id(uid)
+    if not user:
+        raise HTTPException(401, detail="User not found")
+    return user
+
+# ══════════════════════════════════════════════════════════════════
+# FastAPI app
+# ══════════════════════════════════════════════════════════════════
+app = FastAPI(title="Ragsy API", version="3.1.0")
 app.add_middleware(CORSMiddleware,
     allow_origins=["http://localhost:3000","http://127.0.0.1:3000"],
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
+# ── SMS ───────────────────────────────────────────────────────────
 FAST2SMS_KEY = os.getenv("FAST2SMS_API_KEY", "")
 TWILIO_SID   = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
@@ -21,7 +271,6 @@ def send_sms(to_number: str, otp: str) -> dict:
     digits   = re.sub(r"[^0-9]", "", to_number)
     indian10 = digits[-10:] if len(digits) >= 10 else digits
     message  = f"Your Ragsy OTP is {otp}. Valid for 5 minutes. Do not share."
-
     if FAST2SMS_KEY:
         try:
             r = http_requests.post(
@@ -37,7 +286,6 @@ def send_sms(to_number: str, otp: str) -> dict:
             return {"sent":False,"provider":"fast2sms","error":str(d.get("message",d))}
         except Exception as e:
             print(f"[SMS ERR Fast2SMS] {e}")
-
     if TWILIO_SID and TWILIO_TOKEN and TWILIO_FROM:
         try:
             from twilio.rest import Client
@@ -48,10 +296,10 @@ def send_sms(to_number: str, otp: str) -> dict:
         except Exception as e:
             print(f"[SMS ERR Twilio] {e}")
             return {"sent":False,"provider":"twilio","error":str(e)}
-
     print(f"[DEV OTP] {to_number} => {otp}")
     return {"sent":False,"provider":"console","error":"No SMS provider configured"}
 
+# ── Pydantic Models ───────────────────────────────────────────────
 class RegisterRequest(BaseModel):
     username: str; mobile_no: str; password: str
 class OTPVerifyRequest(BaseModel):
@@ -68,93 +316,121 @@ class RunRequest(BaseModel):
     code: str
     user_inputs: List[str] = []
 
-users_db={}; otp_db={}; sessions_db={}
-submissions_db={}; flowcharts_db={}; explanations_db={}
-actions_log=[]; reports_db=[]
-_uid=[0]; _cid=[0]
+def gen_otp(): return "".join(random.choices(string.digits, k=6))
 
-def new_uid(): _uid[0]+=1; return _uid[0]
-def new_cid(): _cid[0]+=1; return _cid[0]
-def gen_otp(): return "".join(random.choices(string.digits,k=6))
-def gen_token(m):
-    t="".join(random.choices(string.ascii_letters+string.digits,k=32))
-    sessions_db[t]=m; return t
-def log_action(uid,action):
-    now=datetime.utcnow().isoformat()
-    actions_log.append({"log_id":len(actions_log)+1,"user_id":uid,"action_time":now})
-    reports_db.append({"report_id":len(reports_db)+1,"user_id":uid,"action_type":action,"action_time":now})
-def user_by_token(token):
-    m=sessions_db.get(token)
-    if not m: raise HTTPException(401,detail="Invalid or expired token")
-    return users_db[m]
-
+# ══════════════════════════════════════════════════════════════════
+# AUTH ROUTES — reading/writing real SQL Server DB
+# ══════════════════════════════════════════════════════════════════
 @app.get("/")
-def root(): return {"status":"running","app":"Ragsy","version":"3.0.0"}
+def root(): return {"status":"running","app":"Ragsy","version":"3.1.0"}
+
 @app.get("/health")
-def health(): return {"status":"healthy","timestamp":datetime.utcnow().isoformat()}
+def health():
+    db_ok = test_db_connection()
+    return {"status":"healthy","db_connected":db_ok,"timestamp":datetime.utcnow().isoformat()}
 
 @app.post("/auth/register")
-def register(data:RegisterRequest):
-    if data.mobile_no in users_db: raise HTTPException(400,detail="Mobile already registered")
-    for u in users_db.values():
-        if u["username"]==data.username: raise HTTPException(400,detail="Username already taken")
-    if len(data.password)<6: raise HTTPException(400,detail="Password must be at least 6 characters")
-    uid=new_uid()
-    users_db[data.mobile_no]={"user_id":uid,"username":data.username,
-        "mobile_no":data.mobile_no,"password":data.password,
-        "created_at":datetime.utcnow().isoformat()}
-    otp=gen_otp()
-    otp_db[data.mobile_no]={"otp_code":otp,"expiry_time":datetime.utcnow()+timedelta(minutes=5),"status":"pending"}
-    sms=send_sms(data.mobile_no,otp)
-    log_action(uid,"register")
-    return {"message":"Registered. OTP sent to your mobile.","mobile_no":data.mobile_no,
-            "sms_sent":sms["sent"],"provider":sms["provider"],
-            "otp_code":otp if not sms["sent"] else None,"expires_in":300}
+def register(data: RegisterRequest):
+    if db_user_by_mobile(data.mobile_no):
+        raise HTTPException(400, detail="Mobile number already registered")
+    if db_user_by_username(data.username):
+        raise HTTPException(400, detail="Username already taken")
+    if len(data.password) < 6:
+        raise HTTPException(400, detail="Password must be at least 6 characters")
+
+    uid = db_user_create(data.username, data.mobile_no, hash_pw(data.password))
+
+    otp    = gen_otp()
+    expiry = datetime.utcnow() + timedelta(minutes=5)
+    db_otp_upsert(uid, otp, expiry)
+
+    sms = send_sms(data.mobile_no, otp)
+    db_log(uid, "register")
+
+    return {
+        "message":   "Registered. OTP sent to your mobile.",
+        "mobile_no": data.mobile_no,
+        "sms_sent":  sms["sent"],
+        "provider":  sms["provider"],
+        "otp_code":  otp if not sms["sent"] else None,
+        "expires_in": 300,
+    }
 
 @app.post("/auth/verify-otp")
-def verify_otp(data:OTPVerifyRequest):
-    rec=otp_db.get(data.mobile_no)
-    if not rec: raise HTTPException(400,detail="No OTP found. Please register again.")
-    if rec["status"]=="verified": raise HTTPException(400,detail="OTP already used.")
-    if datetime.utcnow()>rec["expiry_time"]: raise HTTPException(400,detail="OTP expired. Resend.")
-    if rec["otp_code"]!=data.otp_code: raise HTTPException(400,detail="Incorrect OTP.")
-    otp_db[data.mobile_no]["status"]="verified"
-    token=gen_token(data.mobile_no); user=users_db[data.mobile_no]
-    log_action(user["user_id"],"otp_verify")
-    return {"message":"Verified.","token":token,"user":{"username":user["username"],"mobile_no":user["mobile_no"]}}
+def verify_otp(data: OTPVerifyRequest):
+    user = db_user_by_mobile(data.mobile_no)
+    if not user:
+        raise HTTPException(404, detail="Mobile not found. Please register first.")
+    rec = db_otp_get(user["user_id"])
+    if not rec:
+        raise HTTPException(400, detail="No OTP found. Please register again.")
+    if rec["status"] == "verified":
+        raise HTTPException(400, detail="OTP already used.")
+    if datetime.utcnow() > rec["expiry_time"]:
+        db_otp_set_status(user["user_id"], "expired")
+        raise HTTPException(400, detail="OTP expired. Request a new one.")
+    if rec["otp_code"] != data.otp_code:
+        raise HTTPException(400, detail="Incorrect OTP. Please try again.")
+
+    db_otp_set_status(user["user_id"], "verified")
+    token = gen_token(user["user_id"])
+    db_log(user["user_id"], "otp_verify")
+    return {
+        "message": "Mobile verified successfully.",
+        "token":   token,
+        "user":    {"username": user["username"], "mobile_no": user["mobile_no"]},
+    }
 
 @app.post("/auth/resend-otp")
-def resend_otp(data:ResendOTPRequest):
-    if data.mobile_no not in users_db: raise HTTPException(404,detail="Mobile not found.")
-    otp=gen_otp()
-    otp_db[data.mobile_no]={"otp_code":otp,"expiry_time":datetime.utcnow()+timedelta(minutes=5),"status":"pending"}
-    sms=send_sms(data.mobile_no,otp)
-    return {"message":"New OTP sent.","sms_sent":sms["sent"],"provider":sms["provider"],
-            "otp_code":otp if not sms["sent"] else None,"expires_in":300}
+def resend_otp(data: ResendOTPRequest):
+    user = db_user_by_mobile(data.mobile_no)
+    if not user:
+        raise HTTPException(404, detail="Mobile not found. Please register first.")
+    otp    = gen_otp()
+    expiry = datetime.utcnow() + timedelta(minutes=5)
+    db_otp_upsert(user["user_id"], otp, expiry)
+    sms = send_sms(data.mobile_no, otp)
+    return {
+        "message":  "New OTP sent.",
+        "sms_sent": sms["sent"],
+        "provider": sms["provider"],
+        "otp_code": otp if not sms["sent"] else None,
+        "expires_in": 300,
+    }
 
 @app.post("/auth/login")
-def login(data:LoginRequest):
-    user=next((u for u in users_db.values() if u["username"]==data.username),None)
-    if not user: raise HTTPException(401,detail="Username not found")
-    if user["password"]!=data.password: raise HTTPException(401,detail="Incorrect password")
-    rec=otp_db.get(user["mobile_no"])
-    if not rec or rec["status"]!="verified": raise HTTPException(403,detail="Account not verified. Verify OTP first.")
-    token=gen_token(user["mobile_no"]); log_action(user["user_id"],"login")
-    return {"message":"Login successful","token":token,"user":{"username":user["username"],"mobile_no":user["mobile_no"]}}
+def login(data: LoginRequest):
+    user = db_user_by_username(data.username)
+    if not user:
+        raise HTTPException(401, detail="Username not found")
+    if user["password"] != hash_pw(data.password):
+        raise HTTPException(401, detail="Incorrect password")
+    rec = db_otp_get(user["user_id"])
+    if not rec or rec["status"] != "verified":
+        raise HTTPException(403, detail="Account not verified. Please verify your mobile OTP first.")
+    token = gen_token(user["user_id"])
+    db_log(user["user_id"], "login")
+    return {
+        "message": "Login successful",
+        "token":   token,
+        "user":    {"username": user["username"], "mobile_no": user["mobile_no"]},
+    }
 
 @app.post("/auth/logout")
-def logout(data:LogoutRequest):
-    mobile=sessions_db.pop(data.token,None)
-    if mobile:
-        user=users_db.get(mobile)
-        if user: log_action(user["user_id"],"logout")
-    return {"message":"Logged out"}
+def logout(data: LogoutRequest):
+    uid = sessions_db.pop(data.token, None)
+    if uid:
+        db_log(uid, "logout")
+    return {"message": "Logged out successfully"}
 
 @app.get("/auth/me")
-def get_me(token:str):
-    user=user_by_token(token)
-    return {"user_id":user["user_id"],"username":user["username"],"mobile_no":user["mobile_no"]}
+def get_me(token: str):
+    user = user_by_token(token)
+    return {"user_id": user["user_id"], "username": user["username"], "mobile_no": user["mobile_no"]}
 
+# ══════════════════════════════════════════════════════════════════
+# FLOWCHART ENGINE (unchanged)
+# ══════════════════════════════════════════════════════════════════
 NODE_COLORS={
     "start":{"bg":"#0f172a","border":"#38bdf8"},"end":{"bg":"#0f172a","border":"#f43f5e"},
     "func":{"bg":"#4c1d95","border":"#a78bfa"},"class":{"bg":"#78350f","border":"#fbbf24"},
@@ -167,7 +443,8 @@ NODE_COLORS={
     "print":{"bg":"#1e3a5f","border":"#60a5fa"},"call":{"bg":"#1e293b","border":"#64748b"},
     "default":{"bg":"#1e293b","border":"#64748b"},
 }
-SHAPE_MAP={"if":"diamond","elif":"diamond","for":"diamond","while":"diamond","print":"parallelogram","start":"rounded","end":"rounded"}
+SHAPE_MAP={"if":"diamond","elif":"diamond","for":"diamond","while":"diamond",
+           "print":"parallelogram","start":"rounded","end":"rounded"}
 
 def make_node(nid,label,ck,x,y,ntype=None):
     c=NODE_COLORS.get(ck,NODE_COLORS["default"]); sh=SHAPE_MAP.get(ck,"rect")
@@ -247,11 +524,9 @@ def parse_statements(stmts,nodes,edges,parent_id,x,y,depth=0):
                 label=f"{fname}({args})"; ck="print" if fname in("print","input") else "call"
             else: label=safe_unparse(stmt); ck="call"
         else: label=type(stmt).__name__
-
         nodes.append(make_node(node_id,label,ck,x+dx,y+i*130))
         edges.append(make_edge(prev,node_id,color=NODE_COLORS.get(ck,NODE_COLORS["default"])["border"]))
         prev=node_id; cy=y+i*130+130
-
         if body:
             last=parse_statements(body,nodes,edges,node_id,x+80,cy,depth+1)
             prev=last or node_id
@@ -303,7 +578,6 @@ def plain_english_explanation(code,tree):
     intro.append("and displays results on the screen." if prints else "and produces a result.")
     what=re.sub(r",\s+and"," and"," ".join(intro))
     parts.append({"title":"🔍 What it does","body":what})
-
     steps=[]; sn=1
     for node in tree.body:
         if isinstance(node,(ast.Import,ast.ImportFrom)) and sn==1:
@@ -356,7 +630,6 @@ def plain_english_explanation(code,tree):
         elif isinstance(node,ast.Try):
             steps.append(f'Step {sn}: It carefully tries something that might fail, and handles errors gracefully instead of crashing.'); sn+=1
     if steps: parts.append({"title":"📋 How it works","body":"\n".join(steps)})
-
     concepts=[]
     if classes: concepts.append("Object-Oriented Programming (classes and objects)")
     if loops: concepts.append("Loops (repeating steps automatically)")
@@ -365,7 +638,6 @@ def plain_english_explanation(code,tree):
     if any(isinstance(n,ast.ListComp) for n in ast.walk(tree)): concepts.append("List Comprehensions")
     if inames: concepts.append(f"External Libraries ({', '.join(inames[:3])})")
     if concepts: parts.append({"title":"💡 Key concepts","body":"\n".join(f"• {c}" for c in concepts)})
-
     if prints:
         pargs=[", ".join(safe_unparse(a) for a in n.value.args) for n in prints[:3] if isinstance(n.value,ast.Call)]
         if pargs: parts.append({"title":"📤 What you will see","body":f"The program prints: {' | '.join(pargs)}"})
@@ -373,16 +645,9 @@ def plain_english_explanation(code,tree):
         parts.append({"title":"📤 What happens","body":"The program waits for you to type something, then processes it and shows a result."})
     return parts
 
-
-# ══════════════════════════════════════════════════════════════════
-# SCAN INPUT CALLS — tells frontend how many input() prompts exist
-# ══════════════════════════════════════════════════════════════════
 def scan_input_calls(code: str) -> list:
-    """Returns list of {index, prompt} for each input() call in the code."""
-    try:
-        tree = ast.parse(code)
-    except:
-        return []
+    try: tree = ast.parse(code)
+    except: return []
     inputs = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
@@ -396,45 +661,31 @@ def scan_input_calls(code: str) -> list:
                 inputs.append({"index": len(inputs), "prompt": str(prompt)})
     return inputs
 
-
-# ══════════════════════════════════════════════════════════════════
-# SAFE CODE EXECUTOR — supports ALL standard Python programs
-# input() values fed from user_inputs list
-# ══════════════════════════════════════════════════════════════════
 def run_code_safe(code: str, user_inputs: list = []) -> dict:
     import math as _math, random as _random, re as _re
     import datetime as _dt, json as _json
     import collections as _col, itertools as _it, functools as _ft, string as _str
-
     out = io.StringIO(); err = io.StringIO()
     old_out, old_err = sys.stdout, sys.stderr
     status = "success"; error = None
     start = datetime.utcnow()
-
-    # Input queue — pop real values one by one
-    queue = list(user_inputs)
-    prompts_hit = []
-
+    queue = list(user_inputs); prompts_hit = []
     def mock_input(prompt=""):
         prompts_hit.append(str(prompt))
         val = queue.pop(0) if queue else ""
-        # Echo like a real terminal: show prompt + typed value
         sys.stdout.write(f"{prompt}{val}\n")
         return str(val)
-
     safe_builtins = {
-        "print":print, "input":mock_input,
+        "print":print,"input":mock_input,
         "int":int,"float":float,"str":str,"bool":bool,"complex":complex,
         "bytes":bytes,"bytearray":bytearray,
         "list":list,"dict":dict,"tuple":tuple,"set":set,"frozenset":frozenset,
         "range":range,"len":len,"type":type,"enumerate":enumerate,
         "zip":zip,"map":map,"filter":filter,"reversed":reversed,"sorted":sorted,
-        "iter":iter,"next":next,
-        "sum":sum,"min":min,"max":max,"abs":abs,"round":round,
-        "divmod":divmod,"pow":pow,"hash":hash,
-        "repr":repr,"hex":hex,"oct":oct,"bin":bin,"chr":chr,"ord":ord,"format":format,
-        "any":any,"all":all,"callable":callable,"id":id,
-        "isinstance":isinstance,"issubclass":issubclass,
+        "iter":iter,"next":next,"sum":sum,"min":min,"max":max,"abs":abs,"round":round,
+        "divmod":divmod,"pow":pow,"hash":hash,"repr":repr,"hex":hex,"oct":oct,
+        "bin":bin,"chr":chr,"ord":ord,"format":format,"any":any,"all":all,
+        "callable":callable,"id":id,"isinstance":isinstance,"issubclass":issubclass,
         "hasattr":hasattr,"getattr":getattr,"setattr":setattr,"delattr":delattr,
         "vars":vars,"dir":dir,
         "Exception":Exception,"ValueError":ValueError,"TypeError":TypeError,
@@ -452,7 +703,6 @@ def run_code_safe(code: str, user_inputs: list = []) -> dict:
         "math":_math,"random":_random,"re":_re,"datetime":_dt,
         "json":_json,"collections":_col,"itertools":_it,"functools":_ft,"string":_str,
     }
-
     try:
         sys.stdout = out; sys.stderr = err
         exec(compile(code,"<ragsy>","exec"), safe_globals)
@@ -464,23 +714,18 @@ def run_code_safe(code: str, user_inputs: list = []) -> dict:
         status="error"; error="MemoryError: program used too much memory."
         print(error,file=err)
     except Exception:
-        status="error"
-        tb=traceback.format_exc()
-        # Clean internal file paths from traceback
+        status="error"; tb=traceback.format_exc()
         tb=re.sub(r'  File ".*?main\.py".*\n.*\n','',tb)
         tb=tb.replace('File "<ragsy>"','File "<your_code>"')
         error=tb; print(tb,file=err)
     finally:
         sys.stdout=old_out; sys.stderr=old_err
-
     elapsed=int((datetime.utcnow()-start).total_seconds()*1000)
     return {"status":status,"stdout":out.getvalue(),"stderr":err.getvalue(),
             "elapsed_ms":elapsed,"error":error,"prompts_hit":prompts_hit}
 
-
 # ══════════════════════════════════════════════════════════════════
-# POST /scan-inputs — frontend calls this BEFORE running
-# Returns list of input() prompts so UI can ask user for values
+# CODE ROUTES — saving results to SQL Server DB
 # ══════════════════════════════════════════════════════════════════
 @app.post("/scan-inputs")
 async def scan_inputs(request: RunRequest):
@@ -488,44 +733,38 @@ async def scan_inputs(request: RunRequest):
     if not code: return {"inputs":[]}
     return {"inputs": scan_input_calls(code)}
 
-
-# ══════════════════════════════════════════════════════════════════
-# POST /run — execute code with user-supplied input() values
-# ══════════════════════════════════════════════════════════════════
 @app.post("/run")
 async def run_code(request: RunRequest, token: str = ""):
     code = request.code.strip()
-    if not code: raise HTTPException(400,detail="Code cannot be empty")
-
+    if not code: raise HTTPException(400, detail="Code cannot be empty")
     try: ast.parse(code)
     except SyntaxError as e:
         return {"status":"error","stdout":"","stderr":f"SyntaxError at line {e.lineno}: {e.msg}",
                 "elapsed_ms":0,"error":f"SyntaxError: {e.msg}","prompts_hit":[]}
-
     result = run_code_safe(code, request.user_inputs or [])
-    if token:
-        mobile=sessions_db.get(token)
-        if mobile and mobile in users_db: log_action(users_db[mobile]["user_id"],"run_code")
+    uid = sessions_db.get(token)
+    if uid:
+        db_log(uid, "run_code")
     return result
 
-
-# ══════════════════════════════════════════════════════════════════
-# POST /visualize — flowchart + plain-English explanation
-# ══════════════════════════════════════════════════════════════════
 @app.post("/visualize")
 async def visualize_code(request: CodeRequest, token: str = ""):
     _ctr[0]=0; nodes=[]; edges=[]; code=request.code.strip()
-    if not code: raise HTTPException(400,detail="Code cannot be empty")
-    user_id=None
-    if token:
-        mobile=sessions_db.get(token)
-        if mobile and mobile in users_db: user_id=users_db[mobile]["user_id"]
-    code_id=new_cid()
-    submissions_db[code_id]={"code_id":code_id,"user_id":user_id,"source_code":code,
-                              "language":request.language,"upload_time":datetime.utcnow().isoformat()}
+    if not code: raise HTTPException(400, detail="Code cannot be empty")
+
+    uid = sessions_db.get(token)
+
     try: tree=ast.parse(code)
-    except SyntaxError as e: raise HTTPException(400,detail=f"SyntaxError line {e.lineno}: {e.msg}")
-    except Exception as e: raise HTTPException(400,detail=str(e))
+    except SyntaxError as e: raise HTTPException(400, detail=f"SyntaxError line {e.lineno}: {e.msg}")
+    except Exception as e: raise HTTPException(400, detail=str(e))
+
+    # Save CODE_SUBMISSION to DB
+    code_id = None
+    if uid:
+        try:
+            code_id = db_submission_save(uid, code, request.language)
+        except Exception as e:
+            print(f"[DB WARNING] submission save failed: {e}")
 
     start_id=nid()
     nodes.append({"id":start_id,"type":"input","data":{"label":"▶  START"},"position":{"x":300,"y":0},
@@ -540,20 +779,30 @@ async def visualize_code(request: CodeRequest, token: str = ""):
                  "minWidth":"140px","boxShadow":"0 0 24px #f43f5e88","fontFamily":"'Fira Code',monospace"}})
     edges.append(make_edge(last_id,end_id,color="#f43f5e"))
 
-    explanation=plain_english_explanation(code,tree)
-    explanations_db[code_id]={"explanation_id":code_id,"code_id":code_id,"file_path":str(explanation),"download_count":0}
-    flowcharts_db[code_id]={"flowchart_id":code_id,"code_id":code_id,
-                             "diagram_path":{"nodes":nodes,"edges":edges},"generated_time":datetime.utcnow().isoformat()}
-    if user_id: log_action(user_id,"visualize")
+    explanation = plain_english_explanation(code, tree)
+
+    # Save FLOWCHART + EXPLANATION to DB
+    if uid and code_id:
+        try:
+            db_flowchart_save(code_id, json.dumps({"nodes":nodes,"edges":edges}))
+            db_explanation_save(code_id, json.dumps(explanation))
+            db_log(uid, "visualize")
+        except Exception as e:
+            print(f"[DB WARNING] flowchart/explanation save failed: {e}")
+
     lines=len(code.splitlines())
     return {"code_id":code_id,"nodes":nodes,"edges":edges,"explanation":explanation,
             "stats":{"node_count":len(nodes),"edge_count":len(edges),"lines_parsed":lines}}
 
 @app.get("/submissions")
-def get_submissions(token:str):
-    user=user_by_token(token)
-    return {"submissions":[s for s in submissions_db.values() if s["user_id"]==user["user_id"]]}
+def get_submissions(token: str):
+    user = user_by_token(token)
+    try:
+        return {"submissions": db_submissions_by_user(user["user_id"])}
+    except Exception as e:
+        raise HTTPException(500, detail=f"DB error: {e}")
 
 if __name__=="__main__":
+    test_db_connection()   # prints DB status on startup
     import uvicorn
-    uvicorn.run("main:app",host="0.0.0.0",port=8000,reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

@@ -802,6 +802,47 @@ def get_submissions(token: str):
     except Exception as e:
         raise HTTPException(500, detail=f"DB error: {e}")
 
+
+# ══════════════════════════════════════════════════════════════════
+# POST /flowchart/download — records download in FLOWCHARTS table
+# Called by frontend after user downloads the SVG
+# ══════════════════════════════════════════════════════════════════
+@app.post("/flowchart/download")
+def record_flowchart_download(code_id: int, token: str = ""):
+    """
+    Increments download_count in EXPLANATIONS and logs action.
+    Also updates FLOWCHARTS.generated_time to record last download time.
+    """
+    uid = sessions_db.get(token)
+
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+
+        # Update EXPLANATIONS download_count
+        cursor.execute(
+            "UPDATE EXPLANATIONS SET download_count = download_count + 1 WHERE code_id = ?",
+            code_id
+        )
+
+        # Update FLOWCHARTS to record download timestamp
+        cursor.execute(
+            "UPDATE FLOWCHARTS SET generated_time = ? WHERE code_id = ?",
+            datetime.utcnow(), code_id
+        )
+
+        conn.commit()
+        conn.close()
+
+        if uid:
+            db_log(uid, "download_flowchart")
+
+        return {"message": "Download recorded", "code_id": code_id}
+
+    except Exception as e:
+        print(f"[DB WARNING] download record failed: {e}")
+        return {"message": "Download noted (DB log failed)", "code_id": code_id}
+
 if __name__=="__main__":
     test_db_connection()   # prints DB status on startup
     import uvicorn

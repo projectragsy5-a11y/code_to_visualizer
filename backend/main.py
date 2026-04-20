@@ -194,10 +194,15 @@ def db_explanation_save(code_id, explanation_text: str):
     conn = get_db()
     try:
         cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO EXPLANATIONS (code_id,file_path,download_count) VALUES (?,?,0)",
-            code_id, explanation_text
-        )
+        # Try update first, then insert if not exists
+        cur.execute("SELECT explanation_id FROM EXPLANATIONS WHERE code_id=?", code_id)
+        if cur.fetchone():
+            cur.execute("UPDATE EXPLANATIONS SET file_path=? WHERE code_id=?", explanation_text, code_id)
+        else:
+            cur.execute(
+                "INSERT INTO EXPLANATIONS (code_id,file_path,download_count) VALUES (?,?,0)",
+                code_id, explanation_text
+            )
         conn.commit()
     finally:
         conn.close()
@@ -805,43 +810,88 @@ def get_submissions(token: str):
 
 # ══════════════════════════════════════════════════════════════════
 # POST /flowchart/download — records download in FLOWCHARTS table
-# Called by frontend after user downloads the SVG
 # ══════════════════════════════════════════════════════════════════
 @app.post("/flowchart/download")
 def record_flowchart_download(code_id: int, token: str = ""):
     """
-    Increments download_count in EXPLANATIONS and logs action.
-    Also updates FLOWCHARTS.generated_time to record last download time.
+    Increments download_count in EXPLANATIONS table.
+    Updates FLOWCHARTS.generated_time to record the download timestamp.
+    Logs to USER_ACTIONS_LOG and REPORTS.
     """
     uid = sessions_db.get(token)
-
     try:
         conn = get_db()
-        cursor = conn.cursor()
-
-        # Update EXPLANATIONS download_count
-        cursor.execute(
-            "UPDATE EXPLANATIONS SET download_count = download_count + 1 WHERE code_id = ?",
-            code_id
-        )
-
-        # Update FLOWCHARTS to record download timestamp
-        cursor.execute(
+        cur  = conn.cursor()
+        # Increment download_count in EXPLANATIONS
+        cur.execute(
+            "UPDATE EXPLANATIONS SET download_count = ISNULL(download_count,0) + 1 WHERE code_id = ?",
+            code_id)
+        # Record download time in FLOWCHARTS (reuse generated_time column)
+        cur.execute(
             "UPDATE FLOWCHARTS SET generated_time = ? WHERE code_id = ?",
-            datetime.utcnow(), code_id
-        )
-
+            datetime.utcnow(), code_id)
         conn.commit()
         conn.close()
-
         if uid:
             db_log(uid, "download_flowchart")
-
-        return {"message": "Download recorded", "code_id": code_id}
-
+        return {"message": "Download recorded", "code_id": code_id, "status": "ok"}
     except Exception as e:
         print(f"[DB WARNING] download record failed: {e}")
-        return {"message": "Download noted (DB log failed)", "code_id": code_id}
+        # Don't fail the user — download already happened
+        return {"message": "Download noted", "code_id": code_id, "status": "db_warn"}
+
+# ══════════════════════════════════════════════════════════════════
+# GET /activities — recent submissions + actions for a user
+# ══════════════════════════════════════════════════════════════════
+@app.get("/activities")
+def get_activities(token: str, limit: int = 10):
+    """
+    Returns recent activity for the logged-in user.
+    Joins CODE_SUBMISSIONS + FLOWCHARTS + EXPLANATIONS.
+    """
+    user = user_by_token(token)
+    uid  = user["user_id"]
+    try:
+        conn = get_db()
+        cur  = conn.cursor()
+        # Recent code submissions with flowchart/explanation info
+        cur.execute("""
+            SELECT
+                cs.code_id,
+                cs.source_code,
+                cs.language,
+                cs.upload_time,
+                f.generated_time  AS flowchart_time,
+                e.download_count  AS downloads,
+                e.file_path       AS explanation
+            FROM CODE_SUBMISSIONS cs
+            LEFT JOIN FLOWCHARTS f    ON f.code_id = cs.code_id
+            LEFT JOIN EXPLANATIONS e  ON e.code_id = cs.code_id
+            WHERE cs.user_id = ?
+            ORDER BY cs.upload_time DESC
+            OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
+        """, uid, limit)
+        rows = cur.fetchall()
+        conn.close()
+        activities = []
+        for r in rows:
+            # Parse explanation JSON back to list
+            expl = []
+            try:
+                if r[6]: expl = json.loads(r[6])
+            except: pass
+            activities.append({
+                "code_id":       r[0],
+                "source_code":   r[1][:200] + ("..." if len(r[1])>200 else ""),
+                "language":      r[2],
+                "upload_time":   str(r[3]),
+                "flowchart_time": str(r[4]) if r[4] else None,
+                "downloads":     r[5] or 0,
+                "explanation":   expl,
+            })
+        return {"activities": activities, "count": len(activities)}
+    except Exception as e:
+        raise HTTPException(500, detail=f"DB error: {e}")
 
 if __name__=="__main__":
     test_db_connection()   # prints DB status on startup

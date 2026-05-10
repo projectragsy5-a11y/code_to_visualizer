@@ -1,4 +1,4 @@
-"""Ragsy Backend v3 + SQL Server DB — All Python programs execute, OTP via Fast2SMS/Twilio"""
+"""Ragsy Backend v4 — SQL Server DB, Forgot Password, Admin Dashboard, JS execution, Code Encryption"""
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -7,6 +7,22 @@ import ast, random, string, sys, io, traceback, re, hashlib, json
 from datetime import datetime, timedelta
 import os, requests as http_requests
 import pyodbc
+import subprocess, tempfile
+
+# ── Encryption (Fernet AES — reversible so users can retrieve their code) ──
+try:
+    from cryptography.fernet import Fernet
+    _FERNET_AVAILABLE = True
+except ImportError:
+    _FERNET_AVAILABLE = False
+    print("[WARN] cryptography not installed — run: pip install cryptography")
+
+# ── Load .env if present ──────────────────────────────────────────
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 # ══════════════════════════════════════════════════════════════════
 # SQL SERVER CONNECTION
@@ -49,6 +65,32 @@ def hash_pw(pw: str) -> str:
     """SHA-256 — never store plain text passwords in DB."""
     return hashlib.sha256(pw.encode()).hexdigest()
 
+# ── Code encryption helpers ───────────────────────────────────────
+ENCRYPTION_KEY = os.getenv("CODE_ENCRYPTION_KEY", "")
+
+def get_fernet():
+    if not _FERNET_AVAILABLE or not ENCRYPTION_KEY:
+        return None
+    try:
+        return Fernet(ENCRYPTION_KEY.encode())
+    except Exception:
+        return None
+
+def encrypt_code(code: str) -> str:
+    f = get_fernet()
+    if not f:
+        return code
+    return f.encrypt(code.encode()).decode()
+
+def decrypt_code(encrypted: str) -> str:
+    f = get_fernet()
+    if not f:
+        return encrypted
+    try:
+        return f.decrypt(encrypted.encode()).decode()
+    except Exception:
+        return encrypted  # fallback for already-plain records
+
 # ══════════════════════════════════════════════════════════════════
 # DB HELPER FUNCTIONS — one per table, matching your ERD schema
 # ══════════════════════════════════════════════════════════════════
@@ -75,12 +117,12 @@ def db_user_by_mobile(mobile_no) -> dict | None:
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT user_id,username,mobile_no,password,created_at "
+            "SELECT user_id,username,mobile_no,password,created_at,is_admin "
             "FROM USERS WHERE mobile_no=?", mobile_no)
         r = cur.fetchone()
         if not r: return None
         return {"user_id":r[0],"username":r[1],"mobile_no":r[2],
-                "password":r[3],"created_at":str(r[4])}
+                "password":r[3],"created_at":str(r[4]),"is_admin":bool(r[5]) if r[5] is not None else False}
     finally:
         conn.close()
 
@@ -89,11 +131,12 @@ def db_user_by_username(username) -> dict | None:
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT user_id,username,mobile_no,password "
+            "SELECT user_id,username,mobile_no,password,is_admin "
             "FROM USERS WHERE username=?", username)
         r = cur.fetchone()
         if not r: return None
-        return {"user_id":r[0],"username":r[1],"mobile_no":r[2],"password":r[3]}
+        return {"user_id":r[0],"username":r[1],"mobile_no":r[2],"password":r[3],
+                "is_admin":bool(r[4]) if r[4] is not None else False}
     finally:
         conn.close()
 
@@ -101,10 +144,11 @@ def db_user_by_id(uid) -> dict | None:
     conn = get_db()
     try:
         cur = conn.cursor()
-        cur.execute("SELECT user_id,username,mobile_no FROM USERS WHERE user_id=?", uid)
+        cur.execute("SELECT user_id,username,mobile_no,is_admin FROM USERS WHERE user_id=?", uid)
         r = cur.fetchone()
         if not r: return None
-        return {"user_id":r[0],"username":r[1],"mobile_no":r[2]}
+        return {"user_id":r[0],"username":r[1],"mobile_no":r[2],
+                "is_admin":bool(r[3]) if r[3] is not None else False}
     finally:
         conn.close()
 
@@ -149,14 +193,14 @@ def db_otp_set_status(user_id, status):
 
 # ── CODE_SUBMISSIONS table ────────────────────────────────────────
 def db_submission_save(user_id, source_code, language) -> int:
-    """INSERT submission. Returns new code_id from DB."""
+    """INSERT submission with encrypted source code. Returns new code_id from DB."""
     conn = get_db()
     try:
         cur = conn.cursor()
         cur.execute(
             "INSERT INTO CODE_SUBMISSIONS (user_id,source_code,language,upload_time) "
             "OUTPUT INSERTED.code_id VALUES (?,?,?,?)",
-            user_id, source_code, language, datetime.utcnow()
+            user_id, encrypt_code(source_code), language, datetime.utcnow()
         )
         cid = cur.fetchone()[0]
         conn.commit()
@@ -172,7 +216,17 @@ def db_submissions_by_user(user_id) -> list:
             "SELECT code_id,source_code,language,upload_time FROM CODE_SUBMISSIONS "
             "WHERE user_id=? ORDER BY upload_time DESC", user_id)
         rows = cur.fetchall()
-        return [{"code_id":r[0],"source_code":r[1][:120]+"...","language":r[2],"upload_time":str(r[3])} for r in rows]
+        result = []
+        for r in rows:
+            full = decrypt_code(r[1])
+            result.append({
+                "code_id": r[0],
+                "source_code_full": full,
+                "source_code": full[:120] + ("..." if len(full) > 120 else ""),
+                "language": r[2],
+                "upload_time": str(r[3])
+            })
+        return result
     finally:
         conn.close()
 
@@ -241,19 +295,22 @@ def db_log(user_id, action_type):
     except Exception as e:
         print(f"[DB LOG WARNING] {e}")
 
-# ── Session store (in-memory — no sessions table in your schema) ──
-sessions_db = {}   # token -> user_id
+# ── Session store (in-memory, with 24-hour expiry) ────────────────
+sessions_db = {}   # token -> {"user_id": int, "expires": datetime}
 
 def gen_token(user_id: int) -> str:
     t = "".join(random.choices(string.ascii_letters + string.digits, k=32))
-    sessions_db[t] = user_id
+    sessions_db[t] = {"user_id": user_id, "expires": datetime.utcnow() + timedelta(hours=24)}
     return t
 
 def user_by_token(token: str) -> dict:
-    uid = sessions_db.get(token)
-    if not uid:
-        raise HTTPException(401, detail="Invalid or expired token")
-    user = db_user_by_id(uid)
+    rec = sessions_db.get(token)
+    if not rec:
+        raise HTTPException(401, detail="Invalid or expired session. Please log in again.")
+    if datetime.utcnow() > rec["expires"]:
+        del sessions_db[token]
+        raise HTTPException(401, detail="Session expired. Please log in again.")
+    user = db_user_by_id(rec["user_id"])
     if not user:
         raise HTTPException(401, detail="User not found")
     return user
@@ -261,9 +318,12 @@ def user_by_token(token: str) -> dict:
 # ══════════════════════════════════════════════════════════════════
 # FastAPI app
 # ══════════════════════════════════════════════════════════════════
-app = FastAPI(title="Ragsy API", version="3.1.0")
+app = FastAPI(title="Ragsy API", version="4.0.0")
 app.add_middleware(CORSMiddleware,
-    allow_origins=["http://localhost:3000","http://127.0.0.1:3000"],
+    allow_origins=[
+        "http://localhost:3000","http://127.0.0.1:3000",
+        "http://localhost:5173","http://127.0.0.1:5173",
+    ],
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 # ── SMS ───────────────────────────────────────────────────────────
@@ -319,7 +379,12 @@ class CodeRequest(BaseModel):
     code: str; language: str = "python"
 class RunRequest(BaseModel):
     code: str
+    language: str = "python"
     user_inputs: List[str] = []
+class ForgotPasswordRequest(BaseModel):
+    mobile_no: str
+class ResetPasswordRequest(BaseModel):
+    mobile_no: str; otp_code: str; new_password: str
 
 def gen_otp(): return "".join(random.choices(string.digits, k=6))
 
@@ -342,23 +407,13 @@ def register(data: RegisterRequest):
         raise HTTPException(400, detail="Username already taken")
     if len(data.password) < 6:
         raise HTTPException(400, detail="Password must be at least 6 characters")
-
     uid = db_user_create(data.username, data.mobile_no, hash_pw(data.password))
-
-    otp    = gen_otp()
-    expiry = datetime.utcnow() + timedelta(minutes=5)
-    db_otp_upsert(uid, otp, expiry)
-
-    sms = send_sms(data.mobile_no, otp)
+    token = gen_token(uid)
     db_log(uid, "register")
-
     return {
-        "message":   "Registered. OTP sent to your mobile.",
-        "mobile_no": data.mobile_no,
-        "sms_sent":  sms["sent"],
-        "provider":  sms["provider"],
-        "otp_code":  otp if not sms["sent"] else None,
-        "expires_in": 300,
+        "message": "Welcome to Ragsy! Your account is ready.",
+        "token": token,
+        "user": {"username": data.username, "mobile_no": data.mobile_no},
     }
 
 @app.post("/auth/verify-otp")
@@ -410,28 +465,169 @@ def login(data: LoginRequest):
         raise HTTPException(401, detail="Username not found")
     if user["password"] != hash_pw(data.password):
         raise HTTPException(401, detail="Incorrect password")
-    rec = db_otp_get(user["user_id"])
-    if not rec or rec["status"] != "verified":
-        raise HTTPException(403, detail="Account not verified. Please verify your mobile OTP first.")
     token = gen_token(user["user_id"])
     db_log(user["user_id"], "login")
     return {
         "message": "Login successful",
         "token":   token,
-        "user":    {"username": user["username"], "mobile_no": user["mobile_no"]},
+        "user":    {"username": user["username"], "mobile_no": user["mobile_no"],
+                    "is_admin": user.get("is_admin", False)},
     }
 
 @app.post("/auth/logout")
 def logout(data: LogoutRequest):
-    uid = sessions_db.pop(data.token, None)
-    if uid:
-        db_log(uid, "logout")
+    rec = sessions_db.pop(data.token, None)
+    if rec:
+        db_log(rec["user_id"], "logout")
     return {"message": "Logged out successfully"}
 
 @app.get("/auth/me")
 def get_me(token: str):
     user = user_by_token(token)
-    return {"user_id": user["user_id"], "username": user["username"], "mobile_no": user["mobile_no"]}
+    return {"user_id": user["user_id"], "username": user["username"],
+            "mobile_no": user["mobile_no"], "is_admin": user.get("is_admin", False)}
+
+# ── Forgot Password ───────────────────────────────────────────────
+@app.post("/auth/forgot-password")
+def forgot_password(data: ForgotPasswordRequest):
+    user = db_user_by_mobile(data.mobile_no)
+    if not user:
+        raise HTTPException(404, detail="No account found with this mobile number")
+    otp    = gen_otp()
+    expiry = datetime.utcnow() + timedelta(minutes=5)
+    db_otp_upsert(user["user_id"], otp, expiry)
+    sms = send_sms(data.mobile_no, otp)
+    return {
+        "message":   "OTP sent to your mobile number",
+        "sms_sent":  sms["sent"],
+        "provider":  sms["provider"],
+        "otp_code":  otp if not sms["sent"] else None,   # only shown when no SMS provider is set (dev mode)
+        "expires_in": 300,
+    }
+
+@app.post("/auth/reset-password")
+def reset_password(data: ResetPasswordRequest):
+    user = db_user_by_mobile(data.mobile_no)
+    if not user:
+        raise HTTPException(404, detail="Mobile not found")
+    if len(data.new_password) < 6:
+        raise HTTPException(400, detail="Password must be at least 6 characters")
+    rec = db_otp_get(user["user_id"])
+    if not rec:
+        raise HTTPException(400, detail="No OTP found. Please request a new one.")
+    if datetime.utcnow() > rec["expiry_time"]:
+        db_otp_set_status(user["user_id"], "expired")
+        raise HTTPException(400, detail="OTP expired. Please request a new one.")
+    if rec["otp_code"] != data.otp_code:
+        raise HTTPException(400, detail="Incorrect OTP. Please try again.")
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE USERS SET password=? WHERE user_id=?",
+                    hash_pw(data.new_password), user["user_id"])
+        conn.commit()
+    finally:
+        conn.close()
+    db_otp_set_status(user["user_id"], "verified")
+    db_log(user["user_id"], "reset_password")
+    return {"message": "Password updated successfully. You can now log in with your new password."}
+
+# ── Admin helpers ─────────────────────────────────────────────────
+def require_admin(token: str) -> dict:
+    rec = sessions_db.get(token)
+    if not rec:
+        raise HTTPException(401, detail="Invalid token")
+    if datetime.utcnow() > rec["expires"]:
+        del sessions_db[token]
+        raise HTTPException(401, detail="Session expired")
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT user_id,username,is_admin FROM USERS WHERE user_id=?", rec["user_id"])
+        r = cur.fetchone()
+        if not r or not r[2]:
+            raise HTTPException(403, detail="Admin access required")
+        return {"user_id": r[0], "username": r[1]}
+    finally:
+        conn.close()
+
+# ── Admin routes ──────────────────────────────────────────────────
+@app.get("/admin/stats")
+def admin_stats(token: str):
+    require_admin(token)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM USERS WHERE is_admin=0"); total_users = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM CODE_SUBMISSIONS"); total_sub = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM FLOWCHARTS"); total_fc = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM USERS WHERE created_at >= DATEADD(day,-7,GETUTCDATE()) AND is_admin=0")
+        new_week = cur.fetchone()[0]
+        return {"total_users": total_users, "total_submissions": total_sub,
+                "total_flowcharts": total_fc, "new_users_this_week": new_week}
+    finally:
+        conn.close()
+
+@app.get("/admin/users")
+def admin_get_users(token: str, page: int = 1, limit: int = 20):
+    require_admin(token)
+    offset = (page - 1) * limit
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT u.user_id, u.username, u.mobile_no, u.created_at,
+                   COUNT(cs.code_id) AS submission_count
+            FROM USERS u
+            LEFT JOIN CODE_SUBMISSIONS cs ON cs.user_id = u.user_id
+            WHERE u.is_admin = 0
+            GROUP BY u.user_id, u.username, u.mobile_no, u.created_at
+            ORDER BY u.created_at DESC
+            OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+        """, offset, limit)
+        rows = cur.fetchall()
+        cur.execute("SELECT COUNT(*) FROM USERS WHERE is_admin=0")
+        total = cur.fetchone()[0]
+        return {
+            "users": [{"user_id":r[0],"username":r[1],"mobile_no":r[2],
+                       "created_at":str(r[3]),"submission_count":r[4]} for r in rows],
+            "total": total, "page": page, "limit": limit
+        }
+    finally:
+        conn.close()
+
+@app.delete("/admin/users/{user_id}")
+def admin_delete_user(user_id: int, token: str):
+    require_admin(token)
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM USERS WHERE user_id=? AND is_admin=0", user_id)
+        conn.commit()
+        return {"message": f"User {user_id} deleted"}
+    finally:
+        conn.close()
+
+@app.get("/admin/submissions")
+def admin_get_submissions(token: str, page: int = 1, limit: int = 20):
+    require_admin(token)
+    offset = (page - 1) * limit
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT cs.code_id, u.username, cs.language, cs.upload_time,
+                   LEN(cs.source_code) AS code_length
+            FROM CODE_SUBMISSIONS cs
+            JOIN USERS u ON u.user_id = cs.user_id
+            ORDER BY cs.upload_time DESC
+            OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+        """, offset, limit)
+        rows = cur.fetchall()
+        return {"submissions": [{"code_id":r[0],"username":r[1],"language":r[2],
+                                  "upload_time":str(r[3]),"code_length":r[4]} for r in rows]}
+    finally:
+        conn.close()
 
 # ══════════════════════════════════════════════════════════════════
 # FLOWCHART ENGINE (unchanged)
@@ -729,6 +925,47 @@ def run_code_safe(code: str, user_inputs: list = []) -> dict:
     return {"status":status,"stdout":out.getvalue(),"stderr":err.getvalue(),
             "elapsed_ms":elapsed,"error":error,"prompts_hit":prompts_hit}
 
+def run_js_safe(code: str, user_inputs: list = []) -> dict:
+    """Run JavaScript via Node.js with 5-second timeout."""
+    # Check Node.js is available
+    try:
+        subprocess.run(["node", "--version"], capture_output=True, timeout=3)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return {"status":"error","stdout":"","stderr":"Node.js not found. Install Node.js to run JavaScript.",
+                "elapsed_ms":0,"error":"Node.js not installed","prompts_hit":[]}
+
+    # Build safe wrapper: inject inputs array and mock prompt/readline
+    header = (
+        "const __inputs = " + json.dumps(user_inputs) + ";\n"
+        "let __inputIdx = 0;\n"
+        "function prompt(msg='') { const v = __inputs[__inputIdx++] ?? ''; process.stdout.write(String(msg) + v + '\\n'); return String(v); }\n"
+        "const readline = { question: (q, cb) => { const v = __inputs[__inputIdx++] ?? ''; cb(v); } };\n"
+    )
+    full_code = header + code
+
+    with tempfile.NamedTemporaryFile(suffix=".js", delete=False, mode='w', encoding='utf-8') as f:
+        f.write(full_code)
+        fname = f.name
+
+    start = datetime.utcnow()
+    try:
+        result = subprocess.run(["node", fname], capture_output=True, text=True, timeout=5)
+        elapsed = int((datetime.utcnow() - start).total_seconds() * 1000)
+        return {
+            "status": "error" if result.returncode != 0 else "success",
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "elapsed_ms": elapsed,
+            "error": result.stderr if result.returncode != 0 else None,
+            "prompts_hit": []
+        }
+    except subprocess.TimeoutExpired:
+        return {"status":"error","stdout":"","stderr":"Timeout: execution exceeded 5 seconds.",
+                "elapsed_ms":5000,"error":"Timeout","prompts_hit":[]}
+    finally:
+        try: os.unlink(fname)
+        except: pass
+
 # ══════════════════════════════════════════════════════════════════
 # CODE ROUTES — saving results to SQL Server DB
 # ══════════════════════════════════════════════════════════════════
@@ -736,20 +973,28 @@ def run_code_safe(code: str, user_inputs: list = []) -> dict:
 async def scan_inputs(request: RunRequest):
     code = request.code.strip()
     if not code: return {"inputs":[]}
+    if request.language == "javascript":
+        return {"inputs":[]}   # JS uses prompt() inline; no pre-scan needed
     return {"inputs": scan_input_calls(code)}
 
 @app.post("/run")
 async def run_code(request: RunRequest, token: str = ""):
     code = request.code.strip()
+    lang = request.language or "python"
     if not code: raise HTTPException(400, detail="Code cannot be empty")
-    try: ast.parse(code)
-    except SyntaxError as e:
-        return {"status":"error","stdout":"","stderr":f"SyntaxError at line {e.lineno}: {e.msg}",
-                "elapsed_ms":0,"error":f"SyntaxError: {e.msg}","prompts_hit":[]}
-    result = run_code_safe(code, request.user_inputs or [])
-    uid = sessions_db.get(token)
-    if uid:
-        db_log(uid, "run_code")
+
+    if lang == "javascript":
+        result = run_js_safe(code, request.user_inputs or [])
+    else:
+        try: ast.parse(code)
+        except SyntaxError as e:
+            return {"status":"error","stdout":"","stderr":f"SyntaxError at line {e.lineno}: {e.msg}",
+                    "elapsed_ms":0,"error":f"SyntaxError: {e.msg}","prompts_hit":[]}
+        result = run_code_safe(code, request.user_inputs or [])
+
+    rec = sessions_db.get(token)
+    if rec:
+        db_log(rec["user_id"], f"run_{lang}")
     return result
 
 @app.post("/visualize")
@@ -757,7 +1002,8 @@ async def visualize_code(request: CodeRequest, token: str = ""):
     _ctr[0]=0; nodes=[]; edges=[]; code=request.code.strip()
     if not code: raise HTTPException(400, detail="Code cannot be empty")
 
-    uid = sessions_db.get(token)
+    rec = sessions_db.get(token)
+    uid = rec["user_id"] if rec else None
 
     try: tree=ast.parse(code)
     except SyntaxError as e: raise HTTPException(400, detail=f"SyntaxError line {e.lineno}: {e.msg}")
@@ -818,7 +1064,8 @@ def record_flowchart_download(code_id: int, token: str = ""):
     Updates FLOWCHARTS.generated_time to record the download timestamp.
     Logs to USER_ACTIONS_LOG and REPORTS.
     """
-    uid = sessions_db.get(token)
+    rec = sessions_db.get(token)
+    uid = rec["user_id"] if rec else None
     try:
         conn = get_db()
         cur  = conn.cursor()
@@ -875,23 +1122,53 @@ def get_activities(token: str, limit: int = 10):
         conn.close()
         activities = []
         for r in rows:
-            # Parse explanation JSON back to list
             expl = []
             try:
                 if r[6]: expl = json.loads(r[6])
             except: pass
+            full_code = decrypt_code(r[1])
             activities.append({
-                "code_id":       r[0],
-                "source_code":   r[1][:200] + ("..." if len(r[1])>200 else ""),
-                "language":      r[2],
-                "upload_time":   str(r[3]),
+                "code_id":        r[0],
+                "source_code":    full_code[:200] + ("..." if len(full_code) > 200 else ""),
+                "source_code_full": full_code,
+                "language":       r[2],
+                "upload_time":    str(r[3]),
                 "flowchart_time": str(r[4]) if r[4] else None,
-                "downloads":     r[5] or 0,
-                "explanation":   expl,
+                "downloads":      r[5] or 0,
+                "explanation":    expl,
             })
         return {"activities": activities, "count": len(activities)}
     except Exception as e:
         raise HTTPException(500, detail=f"DB error: {e}")
+
+# ── Delete account ────────────────────────────────────────────────
+@app.delete("/auth/account")
+def delete_account(token: str):
+    user = user_by_token(token)
+    uid = user["user_id"]
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        # Delete in FK order
+        cur.execute("DELETE FROM OTP_VERIFICATION WHERE user_id=?", uid)
+        cur.execute("DELETE FROM USER_ACTIONS_LOG WHERE user_id=?", uid)
+        cur.execute("DELETE FROM REPORTS WHERE user_id=?", uid)
+        # Submissions, flowcharts, explanations
+        cur.execute("""
+            DELETE e FROM EXPLANATIONS e
+            JOIN CODE_SUBMISSIONS cs ON cs.code_id = e.code_id
+            WHERE cs.user_id=?""", uid)
+        cur.execute("""
+            DELETE f FROM FLOWCHARTS f
+            JOIN CODE_SUBMISSIONS cs ON cs.code_id = f.code_id
+            WHERE cs.user_id=?""", uid)
+        cur.execute("DELETE FROM CODE_SUBMISSIONS WHERE user_id=?", uid)
+        cur.execute("DELETE FROM USERS WHERE user_id=?", uid)
+        conn.commit()
+    finally:
+        conn.close()
+    sessions_db.pop(token, None)
+    return {"message": "Account and all associated data deleted."}
 
 if __name__=="__main__":
     test_db_connection()   # prints DB status on startup

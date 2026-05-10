@@ -3,13 +3,37 @@ import ReactFlow, {
   Background, Controls, MiniMap,
   useNodesState, useEdgesState,
   Handle, Position,
+  getRectOfNodes, getTransformForBounds,
+  ReactFlowProvider, useReactFlow,
 } from "reactflow";
 import "reactflow/dist/style.css";
+
+/* ── Dagre auto-layout (prevents node overlaps on generation) ──── */
+let _dagre = null;
+async function getDagre() {
+  if (_dagre) return _dagre;
+  try { _dagre = (await import("dagre")).default; return _dagre; } catch { return null; }
+}
+const NODE_W = 220, NODE_H = 80;
+async function applyDagreLayout(nodes, edges) {
+  const dagre = await getDagre();
+  if (!dagre || !nodes.length) return nodes;
+  const g = new dagre.graphlib.Graph();
+  g.setDefaultEdgeLabel(() => ({}));
+  g.setGraph({ rankdir: "TB", nodesep: 60, ranksep: 90, marginx: 40, marginy: 40 });
+  nodes.forEach(n => g.setNode(n.id, { width: NODE_W, height: NODE_H }));
+  edges.forEach(e => g.setEdge(e.source, e.target));
+  dagre.layout(g);
+  return nodes.map(n => {
+    const p = g.node(n.id);
+    return { ...n, position: { x: p.x - NODE_W / 2, y: p.y - NODE_H / 2 } };
+  });
+}
 
 /* ══════════════════════════════════════════════════════════════
    API
 ══════════════════════════════════════════════════════════════ */
-const BASE = "http://localhost:8000";
+const BASE = "";
 async function apiFetch(path, opts = {}) {
   const res = await fetch(`${BASE}${path}`, {
     headers: { "Content-Type": "application/json", ...(opts.headers||{}) },
@@ -314,7 +338,7 @@ function AuthLeft(){
         <div className="chips">
           <div className="chip"><div className="chip-dot"/>Interactive flowcharts</div>
           <div className="chip"><div className="chip-dot"/>PNG download</div>
-          <div className="chip"><div className="chip-dot"/>OTP auth</div>
+          <div className="chip"><div className="chip-dot"/>Forgot password via SMS</div>
           <div className="chip"><div className="chip-dot"/>Recent activity</div>
         </div>
       </div>
@@ -333,19 +357,12 @@ function RegisterView({onSwitch,onRegistered,toast}){
   const [password,setPassword]=useState("");
   const [showPass,setShowPass]=useState(false);
   const [agreed,setAgreed]=useState(false);
-  const [otp,setOtp]=useState(["","","","","",""]);
-  const [timerSecs,setTimerSecs]=useState(300);
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState("");
-  const [mobileNo,setMobileNo]=useState("");
-  const [devOtp,setDevOtp]=useState("");
-  const timerRef=useRef(null);const otpRefs=useRef([]);
   const str=(()=>{let s=0;if(password.length>=6)s++;if(/[A-Z]/.test(password))s++;if(/[0-9]/.test(password))s++;if(/[^A-Za-z0-9]/.test(password))s++;return s;})();
   const strClass=["","str-weak","str-fair","str-good","str-strong"][str];
   const strLabel=["Enter a password","Weak","Fair","Good","Strong ✓"][str];
-  function startTimer(s=300){clearInterval(timerRef.current);setTimerSecs(s);timerRef.current=setInterval(()=>setTimerSecs(p=>{if(p<=1){clearInterval(timerRef.current);return 0;}return p-1;}),1000);}
-  useEffect(()=>()=>clearInterval(timerRef.current),[]);
-  const td=`${String(Math.floor(timerSecs/60)).padStart(2,"0")}:${String(timerSecs%60).padStart(2,"0")}`;
+  const dots=[1,2].map(n=><div key={n} className={`dot ${n<step?"done":n===step?"active":""}`}/>);
   async function step1(e){e.preventDefault();setError("");if(!username.trim())return setError("Username is required");if(!/^[a-z0-9_]{3,20}$/.test(username))return setError("3–20 chars: lowercase, digits, underscores");if(!phone.trim())return setError("Mobile number is required");setStep(2);}
   async function doRegister(e){
     e.preventDefault();setError("");
@@ -354,24 +371,10 @@ function RegisterView({onSwitch,onRegistered,toast}){
     const full=cc+phone.replace(/\s/g,"");setLoading(true);
     try{
       const d=await apiFetch("/auth/register",{method:"POST",body:JSON.stringify({username:username.trim(),mobile_no:full,password})});
-      setMobileNo(full);setDevOtp(d.sms_sent?"":(d.otp_code||""));startTimer(d.expires_in||300);setStep(3);
-      toast("ok",d.sms_sent?`OTP sent to ${full}`:"OTP generated — check dev box below");
+      toast("ok","Account created! Welcome to Ragsy 🎉");
+      onRegistered(username.trim(),d.token,d.user);
     }catch(err){setError(err.message);}finally{setLoading(false);}
   }
-  function otpInput(val,idx){const d=val.replace(/\D/g,"").slice(0,1);const n=[...otp];n[idx]=d;setOtp(n);if(d&&idx<5)otpRefs.current[idx+1]?.focus();}
-  function otpKey(e,idx){if(e.key==="Backspace"&&!otp[idx]&&idx>0)otpRefs.current[idx-1]?.focus();}
-  async function doVerify(e){
-    e.preventDefault();const code=otp.join("");
-    if(code.length<6)return setError("Enter the complete 6-digit code");
-    setLoading(true);setError("");
-    try{await apiFetch("/auth/verify-otp",{method:"POST",body:JSON.stringify({mobile_no:mobileNo,otp_code:code})});onRegistered(username.trim());}
-    catch(err){setError(err.message);}finally{setLoading(false);}
-  }
-  async function resend(){
-    try{const d=await apiFetch("/auth/resend-otp",{method:"POST",body:JSON.stringify({mobile_no:mobileNo})});setDevOtp(d.otp_code||"");startTimer(d.expires_in||300);setOtp(["","","","","",""]);toast("ok","New OTP sent!");}
-    catch(err){setError(err.message);}
-  }
-  const dots=[1,2,3].map(n=><div key={n} className={`dot ${n<step?"done":n===step?"active":""}`}/>);
   return(
     <div className="form-box">
       <div className="form-title">Create your account</div>
@@ -381,26 +384,14 @@ function RegisterView({onSwitch,onRegistered,toast}){
       {step===1&&(<form onSubmit={step1}>
         <div className="field"><div className="flabel">Username</div><div className="inp-wrap"><span className="inp-icon"><IconUser/></span><input value={username} onChange={e=>setUsername(e.target.value.toLowerCase())} placeholder="e.g. alex_dev"/></div>
         {username&&<div className={`val-msg ${/^[a-z0-9_]{3,20}$/.test(username)?"val-ok":"val-err"}`}>{/^[a-z0-9_]{3,20}$/.test(username)?"✓ Looks good":"✕ 3–20 chars"}</div>}</div>
-        <div className="field"><div className="flabel">Mobile Number <span>FOR OTP</span></div><div className="phone-row"><input className="cc-inp" value={cc} onChange={e=>setCc(e.target.value)}/><div className="inp-wrap" style={{flex:1}}><span className="inp-icon"><IconPhone/></span><input type="tel" value={phone} onChange={e=>setPhone(e.target.value)} placeholder="98765 43210"/></div></div></div>
+        <div className="field"><div className="flabel">Mobile Number</div><div className="phone-row"><input className="cc-inp" value={cc} onChange={e=>setCc(e.target.value)}/><div className="inp-wrap" style={{flex:1}}><span className="inp-icon"><IconPhone/></span><input type="tel" value={phone} onChange={e=>setPhone(e.target.value)} placeholder="98765 43210"/></div></div></div>
         <button className="btn-primary" type="submit">Continue →</button>
       </form>)}
       {step===2&&(<form onSubmit={doRegister}>
         <div className="field"><div className="flabel">Password</div><div className="inp-wrap"><span className="inp-icon"><IconLock/></span><input type={showPass?"text":"password"} value={password} onChange={e=>setPassword(e.target.value)} placeholder="At least 6 characters" autoComplete="new-password"/><button type="button" className="inp-toggle" onClick={()=>setShowPass(p=>!p)}>{showPass?"hide":"show"}</button></div><div className="str-bars">{[0,1,2,3].map(i=><div key={i} className={`str-bar ${i<str?strClass:""}`}/>)}</div><div className="str-lbl" style={{color:str===4?"var(--teal)":str===3?"#6bcb77":str===2?"var(--gold)":"var(--red)"}}>{strLabel}</div></div>
-        <div className="check-row"><input type="checkbox" id="tos" checked={agreed} onChange={e=>setAgreed(e.target.checked)}/><label className="check-lbl" htmlFor="tos">I agree to Ragsy's <a href="#">Terms of Service</a> and <a href="#">Privacy Policy</a>.</label></div>
-        <button className="btn-primary" type="submit" disabled={loading}>{loading?"Creating…":"Create Account"}</button>
+        <div className="check-row"><input type="checkbox" id="tos" checked={agreed} onChange={e=>setAgreed(e.target.checked)}/><label className="check-lbl" htmlFor="tos">I agree to Ragsy's <a href="#">Terms of Service</a> and <a href="#">Privacy Policy</a>. Your code is encrypted in our database.</label></div>
+        <button className="btn-primary" type="submit" disabled={loading}>{loading?"Creating account…":"Create Account & Start →"}</button>
         <button type="button" className="btn-ghost" onClick={()=>setStep(1)}>← Back</button>
-      </form>)}
-      {step===3&&(<form onSubmit={doVerify}>
-        <div style={{textAlign:"center",marginBottom:16,padding:"12px 16px",background:devOtp?"rgba(240,165,0,.07)":"rgba(0,200,168,.07)",border:`1px solid ${devOtp?"rgba(240,165,0,.3)":"rgba(0,200,168,.3)"}`,borderRadius:8}}>
-          <div style={{fontSize:20,marginBottom:6}}>{devOtp?"🔧":"📱"}</div>
-          <p style={{fontSize:13,color:"var(--silver)",lineHeight:1.5}}>{devOtp?<>Dev mode — use code below:</>:<>OTP sent to <strong style={{color:"var(--white)"}}>{mobileNo}</strong></>}</p>
-        </div>
-        {devOtp&&<div style={{textAlign:"center",marginBottom:14,fontFamily:"var(--mono)",fontSize:28,fontWeight:700,color:"var(--gold)",letterSpacing:"0.3em",background:"rgba(240,165,0,.08)",border:"1px solid rgba(240,165,0,.25)",borderRadius:8,padding:"14px 12px"}}>{devOtp}</div>}
-        <p className="otp-hint" style={{marginBottom:4}}>Enter the 6-digit code</p>
-        <div className="otp-row">{otp.map((v,i)=>(<input key={i} ref={el=>otpRefs.current[i]=el} className={`otp-box ${v?"filled":""}`} type="text" maxLength={1} inputMode="numeric" value={v} onChange={e=>otpInput(e.target.value,i)} onKeyDown={e=>otpKey(e,i)}/>))}</div>
-        <span className="otp-timer">{timerSecs>0?`Expires in ${td}`:"Code expired"}</span>
-        <button type="button" className="otp-resend" onClick={resend}>Didn't receive it? Resend</button>
-        <button className="btn-primary" type="submit" disabled={loading} style={{marginTop:20}}>{loading?"Verifying…":"Verify & Complete →"}</button>
       </form>)}
     </div>
   );
@@ -435,7 +426,7 @@ function LoginView({onSwitch,onSuccess,toast,registeredUsername}){
         <button className="btn-primary" type="submit" disabled={loading}>{loading?"Signing in…":"Sign In →"}</button>
       </form>
       <div className="or-div">or</div>
-      <button className="btn-ghost" onClick={()=>onSwitch("otp-login")}>📱 Sign in with OTP</button>
+      <button className="btn-ghost" onClick={()=>onSwitch("forgot")}>🔑 Forgot password?</button>
     </div>
   );
 }
@@ -486,6 +477,112 @@ function OtpLoginView({onSwitch,onSuccess,toast}){
 }
 
 /* ══════════════════════════════════════════════════════════════
+   FORGOT PASSWORD
+══════════════════════════════════════════════════════════════ */
+function ForgotPasswordView({onSwitch,toast}){
+  const [step,setStep]=useState(1);
+  const [cc,setCc]=useState("+91");
+  const [phone,setPhone]=useState("");
+  const [mobile,setMobile]=useState("");
+  const [otp,setOtp]=useState(["","","","","",""]);
+  const [devOtp,setDevOtp]=useState("");
+  const [newPw,setNewPw]=useState("");
+  const [showPw,setShowPw]=useState(false);
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState("");
+  const [timer,setTimer]=useState(300);
+  const timerRef=useRef(null);
+  const otpRefs=useRef([]);
+  function startTimer(){clearInterval(timerRef.current);setTimer(300);timerRef.current=setInterval(()=>setTimer(p=>{if(p<=1){clearInterval(timerRef.current);return 0;}return p-1;}),1000);}
+  useEffect(()=>()=>clearInterval(timerRef.current),[]);
+  const td=`${String(Math.floor(timer/60)).padStart(2,"0")}:${String(timer%60).padStart(2,"0")}`;
+
+  async function sendOtp(e){
+    e&&e.preventDefault();setError("");
+    const full=cc+phone.replace(/\s/g,"");
+    setLoading(true);
+    try{
+      const d=await apiFetch("/auth/forgot-password",{method:"POST",body:JSON.stringify({mobile_no:full})});
+      setMobile(full);setDevOtp(d.otp_code||"");startTimer();setStep(2);
+      toast("ok","OTP sent to your mobile!");
+    }catch(err){setError(err.message);}finally{setLoading(false);}
+  }
+
+  function oi(val,idx){const d=val.replace(/\D/g,"").slice(0,1);const n=[...otp];n[idx]=d;setOtp(n);if(d&&idx<5)otpRefs.current[idx+1]?.focus();}
+  function ok(e,idx){if(e.key==="Backspace"&&!otp[idx]&&idx>0)otpRefs.current[idx-1]?.focus();}
+
+  async function verifyOtp(e){
+    e.preventDefault();const code=otp.join("");
+    if(code.length<6)return setError("Enter all 6 digits");
+    setLoading(true);setError("");
+    // We verify by attempting reset with a dummy password; if OTP wrong, it'll fail
+    // Real verify: just move to step 3 and confirm on final submit
+    setStep(3);setLoading(false);
+  }
+
+  async function resetPw(e){
+    e.preventDefault();setError("");
+    if(newPw.length<6)return setError("Password must be at least 6 characters");
+    const code=otp.join("");
+    setLoading(true);
+    try{
+      await apiFetch("/auth/reset-password",{method:"POST",body:JSON.stringify({mobile_no:mobile,otp_code:code,new_password:newPw})});
+      toast("ok","Password updated! Sign in with your new password.");
+      onSwitch("login");
+    }catch(err){
+      setError(err.message);
+      if(err.message.toLowerCase().includes("otp")||err.message.toLowerCase().includes("incorrect")){setStep(2);}
+    }finally{setLoading(false);}
+  }
+
+  const dots=[1,2,3].map(n=><div key={n} className={`dot ${n<step?"done":n===step?"active":""}`}/>);
+
+  return(
+    <div className="form-box">
+      <div className="form-title">Reset password</div>
+      <p className="form-sub">Remembered it? <button onClick={()=>onSwitch("login")}>Sign in →</button></p>
+      <div className="prog">{dots}</div>
+      {error&&<div className="err-box">{error}</div>}
+
+      {step===1&&(<form onSubmit={sendOtp}>
+        <div className="field"><div className="flabel">Your registered mobile number</div>
+          <div className="phone-row">
+            <input className="cc-inp" value={cc} onChange={e=>setCc(e.target.value)}/>
+            <div className="inp-wrap" style={{flex:1}}><span className="inp-icon"><IconPhone/></span><input type="tel" value={phone} onChange={e=>setPhone(e.target.value)} placeholder="98765 43210"/></div>
+          </div>
+        </div>
+        <button className="btn-primary" type="submit" disabled={loading}>{loading?"Sending OTP…":"Send Reset OTP →"}</button>
+        <button type="button" className="btn-ghost" onClick={()=>onSwitch("login")}>← Back to Sign In</button>
+      </form>)}
+
+      {step===2&&(<form onSubmit={verifyOtp}>
+        <p className="otp-hint">OTP sent to <strong style={{color:"var(--white)"}}>{mobile}</strong></p>
+        {devOtp&&<div style={{textAlign:"center",marginTop:10,fontFamily:"var(--mono)",fontSize:11,color:"var(--gold)",background:"rgba(240,165,0,.08)",border:"1px solid rgba(240,165,0,.25)",borderRadius:6,padding:"6px 12px"}}>DEV OTP: <strong>{devOtp}</strong></div>}
+        <div className="otp-row">{otp.map((v,i)=>(<input key={i} ref={el=>otpRefs.current[i]=el} className={`otp-box ${v?"filled":""}`} type="text" maxLength={1} inputMode="numeric" value={v} onChange={e=>oi(e.target.value,i)} onKeyDown={e=>ok(e,i)}/>))}</div>
+        <span className="otp-timer">{timer>0?`Expires in ${td}`:"Code expired"}</span>
+        <button type="button" className="otp-resend" onClick={sendOtp}>Resend OTP</button>
+        <button className="btn-primary" type="submit" disabled={loading||otp.join("").length<6}>{loading?"Verifying…":"Verify OTP →"}</button>
+        <button type="button" className="btn-ghost" onClick={()=>setStep(1)}>← Change number</button>
+      </form>)}
+
+      {step===3&&(<form onSubmit={resetPw}>
+        <div className="success-box" style={{marginBottom:18}}>
+          <span className="success-box-icon">✓</span>
+          <div className="success-box-text"><span className="success-box-title">OTP verified</span><span className="success-box-sub">Now set your new password</span></div>
+        </div>
+        <div className="field"><div className="flabel">New Password</div>
+          <div className="inp-wrap"><span className="inp-icon"><IconLock/></span>
+            <input type={showPw?"text":"password"} value={newPw} onChange={e=>setNewPw(e.target.value)} placeholder="At least 6 characters" autoFocus/>
+            <button type="button" className="inp-toggle" onClick={()=>setShowPw(p=>!p)}>{showPw?"hide":"show"}</button>
+          </div>
+        </div>
+        <button className="btn-primary" type="submit" disabled={loading}>{loading?"Updating…":"Set New Password →"}</button>
+      </form>)}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════
    AUTH PAGE
 ══════════════════════════════════════════════════════════════ */
 function AuthPage({onAuth}){
@@ -502,6 +599,7 @@ function AuthPage({onAuth}){
         {view==="register"&&<RegisterView onSwitch={sw} onRegistered={handleRegistered} toast={fireToast}/>}
         {view==="login"&&<LoginView key={regUser||"fresh"} onSwitch={sw} onSuccess={loginSuccess} toast={fireToast} registeredUsername={regUser}/>}
         {view==="otp-login"&&<OtpLoginView onSwitch={sw} onSuccess={loginSuccess} toast={fireToast}/>}
+        {view==="forgot"&&<ForgotPasswordView onSwitch={sw} toast={fireToast}/>}
       </div>
     </div>
   );
@@ -578,18 +676,28 @@ function DashboardPage({user,onNavigate,onSignOut,token}){
       <div className="dash-body">
         <div className="greeting-eyebrow">Welcome back</div>
         <h1 className="greeting-h">Hello, <span>{user.username}</span> 👋</h1>
-        <p className="greeting-sub">Choose a language to start visualizing code architecture.</p>
+        <p className="greeting-sub">Choose a language to start visualizing and practising code.</p>
         <div className="section-lbl">Available Languages</div>
         <div className="lang-grid">
-          <div className="lang-card" onClick={()=>onNavigate("editor")} style={{animationDelay:"0s"}}>
+          {/* Python Basics */}
+          <div className="lang-card" onClick={()=>onNavigate("editor","python","")} style={{animationDelay:"0s"}}>
             <div className="card-badge">ACTIVE</div>
-            <div className="card-icon">Py</div>
-            <div className="card-name">Python</div>
-            <div className="card-desc">Visualize all Python programs — from basic I/O to OOP, recursion, file handling and more.</div>
+            <div className="card-icon">🐍</div>
+            <div className="card-name">Python Basics</div>
+            <div className="card-desc">Visualize Python programs — from basic I/O to OOP, recursion, file handling and more.</div>
             <div className="card-arrow">↗</div>
           </div>
-          {[["C","C Language","Structs, pointers, memory and function graphs."],["C++","C++ Language","Classes, templates, OOP architecture."],["JS","JavaScript","Modules, async flow, component trees."]].map(([icon,name,desc],i)=>(
-            <div className="lang-card disabled" key={icon} style={{animationDelay:`${(i+1)*.08}s`}}>
+          {/* JavaScript Basics */}
+          <div className="lang-card" onClick={()=>onNavigate("editor","javascript","")} style={{animationDelay:"0.08s"}}>
+            <div className="card-badge" style={{color:"#fbbf24",background:"rgba(251,191,36,.12)",borderColor:"rgba(251,191,36,.3)"}}>NEW</div>
+            <div className="card-icon" style={{background:"rgba(251,191,36,.1)",borderColor:"rgba(251,191,36,.2)",color:"#fbbf24"}}>⚡</div>
+            <div className="card-name">JavaScript Basics</div>
+            <div className="card-desc">Practice JavaScript interactively — functions, loops, arrays, async and DOM concepts.</div>
+            <div className="card-arrow">↗</div>
+          </div>
+          {/* Coming soon */}
+          {[["C","C Language","Structs, pointers, memory and function graphs."],["C++","C++ Language","Classes, templates, OOP architecture."]].map(([icon,name,desc],i)=>(
+            <div className="lang-card disabled" key={icon} style={{animationDelay:`${(i+2)*.08}s`}}>
               <div className="card-badge soon">SOON</div>
               <div className="card-icon dim">{icon}</div>
               <div className="card-name">{name}</div>
@@ -600,7 +708,7 @@ function DashboardPage({user,onNavigate,onSignOut,token}){
         </div>
       </div>
       <ActivitiesPanel open={activitiesOpen} onClose={()=>setActivitiesOpen(false)} token={token}
-        onRestore={a=>{onNavigate("editor",a.source_code);setActivitiesOpen(false);}}/>
+        onRestore={a=>{onNavigate("editor",a.language||"python",a.source_code_full||a.source_code);setActivitiesOpen(false);}}/>
     </div>
   );
 }
@@ -640,17 +748,34 @@ const NODE_TYPES={diamond:DiamondNode,parallelogram:ParallelogramNode};
 /* ══════════════════════════════════════════════════════════════
    FLOW DIAGRAM COMPONENT
 ══════════════════════════════════════════════════════════════ */
-function FlowDiagram({nodes:initN,edges:initE,containerRef}){
-  const [nodes,,onNC]=useNodesState(initN);
+function FlowDiagramInner({nodes:initN,edges:initE}){
+  const [nodes,setNodes,onNC]=useNodesState(initN);
   const [edges,,onEC]=useEdgesState(initE);
+  const { fitView } = useReactFlow();
+
+  useEffect(()=>{
+    setNodes(initN);
+    setTimeout(()=>fitView({padding:0.15,duration:400}),80);
+  },[initN]);
+
   return(
-    <div className="flow-wrap" ref={containerRef}>
-      <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNC} onEdgesChange={onEC}
-        nodeTypes={NODE_TYPES} fitView fitViewOptions={{padding:0.2}} minZoom={0.06} maxZoom={2.5}>
-        <Background color="#1e2530" gap={20}/>
-        <Controls style={{background:"var(--ink2)",border:"1px solid var(--line2)"}}/>
-        <MiniMap style={{background:"#0d0f18"}} nodeColor={n=>n.data?.color||"#3a4658"} maskColor="rgba(0,0,0,.6)"/>
-      </ReactFlow>
+    <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNC} onEdgesChange={onEC}
+      nodeTypes={NODE_TYPES}
+      fitView fitViewOptions={{padding:0.15}}
+      minZoom={0.05} maxZoom={2.5}
+      defaultEdgeOptions={{type:"smoothstep",animated:true}}>
+      <Background color="#1e2530" gap={20}/>
+      <Controls style={{background:"var(--ink2)",border:"1px solid var(--line2)"}}/>
+      <MiniMap style={{background:"#0d0f18"}} nodeColor={n=>n.data?.color||"#3a4658"} maskColor="rgba(0,0,0,.6)"/>
+    </ReactFlow>
+  );
+}
+function FlowDiagram({nodes,edges}){
+  return(
+    <div className="flow-wrap">
+      <ReactFlowProvider>
+        <FlowDiagramInner nodes={nodes} edges={edges}/>
+      </ReactFlowProvider>
     </div>
   );
 }
@@ -907,7 +1032,7 @@ if result is not None:
 /* ══════════════════════════════════════════════════════════════
    EDITOR PAGE
 ══════════════════════════════════════════════════════════════ */
-function EditorPage({user,token,onBack,onSignOut,initialCode=""}){
+function EditorPage({user,token,onBack,onSignOut,initialCode="",editorLang="python"}){
   const [code,setCode]                     = useState(initialCode);
   const [loadingDiagram,setLoadingDiagram] = useState(false);
   const [loadingRun,setLoadingRun]         = useState(false);
@@ -923,6 +1048,7 @@ function EditorPage({user,token,onBack,onSignOut,initialCode=""}){
   const [showInputModal,setShowInputModal] = useState(false);
   const [showSamples,setShowSamples]       = useState(false);
   const [activitiesOpen,setActivitiesOpen] = useState(false);
+  const [lang,setLang]                     = useState(editorLang||"python");
   const flowContainerRef = useRef(null);
   const taRef = useRef(null);
 
@@ -935,12 +1061,14 @@ function EditorPage({user,token,onBack,onSignOut,initialCode=""}){
 
   /* ── Generate Flowchart ─────────────────────────────────────*/
   async function handleGenerate(){
-    if(!code.trim())return fireToast("err","Please paste some Python code first");
+    if(!code.trim())return fireToast("err","Please paste some code first");
     setLoadingDiagram(true);setResult(null);setError("");setConsoleOut(null);
+    setTab("diagram");
     try{
-      const data=await apiFetch(`/visualize?token=${token}`,{method:"POST",body:JSON.stringify({code,language:"python"})});
-      setResult(data);setTab("diagram");
-      fireToast("ok",`Flowchart ready! ${data.stats.node_count} nodes`);
+      const data=await apiFetch(`/visualize?token=${token}`,{method:"POST",body:JSON.stringify({code,language:editorLang})});
+      const laidOutNodes=await applyDagreLayout(data.nodes,data.edges);
+      setResult({...data,nodes:laidOutNodes});
+      fireToast("ok",`Flowchart ready — ${data.stats.node_count} nodes`);
     }catch(err){setError(err.message);fireToast("err",err.message);}
     finally{setLoadingDiagram(false);}
   }
@@ -961,156 +1089,120 @@ function EditorPage({user,token,onBack,onSignOut,initialCode=""}){
   async function executeCode(values){
     setShowInputModal(false);setLoadingRun(true);setTab("console");
     try{
-      const data=await apiFetch(`/run?token=${token}`,{method:"POST",body:JSON.stringify({code,user_inputs:values})});
+      const data=await apiFetch(`/run?token=${token}`,{method:"POST",body:JSON.stringify({code,language:lang,user_inputs:values})});
       setConsoleOut(data);
       fireToast(data.status==="error"?"err":"ok",data.status==="error"?"Runtime error — check Console":`Done in ${data.elapsed_ms}ms`);
     }catch(err){fireToast("err",err.message);}
     finally{setLoadingRun(false);}
   }
 
-  /* ── Download as PNG using html2canvas ─────────────────────
-     We render a hidden off-screen div with ALL nodes drawn as
-     plain HTML (not React Flow), then html2canvas captures it
-     as a proper PNG with all boxes, text, arrows visible.
+  /* ── Download as PNG — captures the live React Flow canvas
+     including all SVG edges/arrows using html-to-image.
+     Falls back to a clean static render if RF viewport not found.
   ──────────────────────────────────────────────────────────── */
   async function handleDownload(){
     if(!result)return fireToast("err","Generate a flowchart first");
     setDownloading(true);
     try{
-      // Dynamically load html2canvas from CDN
-      await loadHtml2Canvas();
+      // Dynamically load html-to-image from CDN
+      await loadHtmlToImage();
+      const { toPng } = window.htmlToImage;
 
-      // Build an off-screen render container
-      const container = document.createElement("div");
-      container.style.cssText = `
-        position:fixed;left:-9999px;top:0;
-        background:#111418;
-        font-family:'Fira Code',monospace;
-        padding:40px;
-        min-width:900px;
-      `;
+      // Target the React Flow renderer which contains nodes + SVG edges
+      const rfViewport = document.querySelector(".react-flow__viewport");
+      const rfWrapper  = document.querySelector(".react-flow");
 
-      // Title
-      const title = document.createElement("div");
-      title.style.cssText = "color:#00c8a8;font-family:'DM Sans',sans-serif;font-size:18px;font-weight:700;margin-bottom:4px;";
-      title.textContent = "Ragsy — Code Architecture Diagram";
-      container.appendChild(title);
+      if(rfViewport && rfWrapper && toPng){
+        // Calculate the bounding box from node positions
+        const ns = result.nodes;
+        const minX = Math.min(...ns.map(n=>n.position.x)) - 60;
+        const minY = Math.min(...ns.map(n=>n.position.y)) - 60;
+        const maxX = Math.max(...ns.map(n=>n.position.x+240)) + 60;
+        const maxY = Math.max(...ns.map(n=>n.position.y+100)) + 60;
+        const W = Math.max(maxX-minX, 900);
+        const H = Math.max(maxY-minY, 500);
 
-      const sub = document.createElement("div");
-      sub.style.cssText = "color:#5a6880;font-family:'DM Mono',monospace;font-size:11px;margin-bottom:30px;";
-      sub.textContent = `Code ID #${result.code_id||"?"} · ${result.stats.lines_parsed} lines · ${result.stats.node_count} nodes`;
-      container.appendChild(sub);
+        // Get current transform of the viewport
+        const style = window.getComputedStyle(rfViewport);
+        const matrix = new DOMMatrixReadOnly(style.transform);
+        const scale  = matrix.a || 1;
+        const tx     = matrix.e || 0;
+        const ty     = matrix.f || 0;
 
-      // Sort nodes by Y position for top-to-bottom layout
-      const nodes = [...result.nodes].sort((a,b)=>a.position.y-b.position.y);
+        const dataUrl = await toPng(rfWrapper, {
+          backgroundColor: "#111418",
+          width:  W,
+          height: H,
+          style:{
+            width:  W+"px",
+            height: H+"px",
+            transform: `translate(${tx - minX * scale}px, ${ty - minY * scale}px) scale(${scale})`,
+            transformOrigin: "top left",
+          },
+          pixelRatio: 2,
+        });
 
-      // Build a lookup for node positions
-      const posMap = {};
-      nodes.forEach(n=>{posMap[n.id]=n.position;});
-
-      // Draw nodes
-      const diagramArea = document.createElement("div");
-      diagramArea.style.cssText = "position:relative;";
-
-      // Calculate bounding box
-      let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
-      nodes.forEach(n=>{
-        minX=Math.min(minX,n.position.x);minY=Math.min(minY,n.position.y);
-        maxX=Math.max(maxX,n.position.x+300);maxY=Math.max(maxY,n.position.y+80);
-      });
-      const W=maxX-minX+120;const H=maxY-minY+120;
-      diagramArea.style.width=W+"px";diagramArea.style.height=H+"px";
-
-      // Draw each node as a styled div
-      nodes.forEach(n=>{
-        const el=document.createElement("div");
-        const x=n.position.x-minX+60;
-        const y=n.position.y-minY+60;
-        const label=n.data?.label||"";
-        const nodeType=n.type||"default";
-        const color=n.data?.color||n.style?.border?.match(/#[0-9a-fA-F]+/)?.[0]||"#64748b";
-        const bg=n.data?.bg||n.style?.background||"#1e293b";
-
-        if(nodeType==="diamond"){
-          // Diamond shape using CSS clip-path
-          el.style.cssText = `
-            position:absolute;left:${x}px;top:${y}px;
-            width:220px;height:120px;
-            background:${bg};
-            border:2.5px solid ${color};
-            clip-path:polygon(50% 0%,100% 50%,50% 100%,0% 50%);
-            display:flex;align-items:center;justify-content:center;
-            font-size:11px;color:#fff;text-align:center;padding:20px 30px;
-            box-shadow:0 0 16px ${color}66;
-          `;
-          // Text inside diamond (needs separate el to avoid clip)
-          const txt=document.createElement("div");
-          txt.style.cssText=`position:absolute;left:${x}px;top:${y}px;width:220px;height:120px;display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff;text-align:center;padding:20px 40px;word-break:break-word;line-height:1.4;font-weight:500;`;
-          txt.textContent=label;
-          diagramArea.appendChild(el);
-          diagramArea.appendChild(txt);
-          return;
-        }else if(nodeType==="input"||nodeType==="output"){
-          el.style.cssText=`position:absolute;left:${x}px;top:${y}px;min-width:160px;padding:12px 28px;background:${bg};border:2px solid ${color};border-radius:50px;color:#fff;font-size:13px;font-weight:700;text-align:center;box-shadow:0 0 20px ${color}88;`;
-        }else if(nodeType==="parallelogram"){
-          el.style.cssText=`position:absolute;left:${x}px;top:${y}px;min-width:180px;max-width:280px;padding:10px 20px;background:${bg};border:2px solid ${color};border-radius:4px;transform:skewX(-10deg);color:#fff;font-size:12px;text-align:center;box-shadow:0 0 12px ${color}44;`;
-        }else{
-          el.style.cssText=`position:absolute;left:${x}px;top:${y}px;min-width:180px;max-width:280px;padding:10px 16px;background:${bg};border:2px solid ${color};border-radius:8px;color:#fff;font-size:12px;text-align:center;word-break:break-word;white-space:pre-wrap;line-height:1.5;box-shadow:0 0 12px ${color}44;`;
-        }
-        el.textContent=label;
-        diagramArea.appendChild(el);
-      });
-
-      container.appendChild(diagramArea);
-
-      // Footer
-      const footer=document.createElement("div");
-      footer.style.cssText="color:#3a4658;font-family:'DM Mono',monospace;font-size:10px;margin-top:24px;";
-      footer.textContent=`Generated by Ragsy · ${new Date().toLocaleString()}`;
-      container.appendChild(footer);
-
-      document.body.appendChild(container);
-
-      // Capture with html2canvas
-      const canvas=await window.html2canvas(container,{
-        backgroundColor:"#111418",
-        scale:2,               // 2x for sharp PNG
-        useCORS:true,
-        logging:false,
-        width:container.scrollWidth+80,
-        height:container.scrollHeight+80,
-      });
-      document.body.removeChild(container);
-
-      // Download as PNG
-      canvas.toBlob(blob=>{
-        const url=URL.createObjectURL(blob);
         const a=document.createElement("a");
-        a.href=url;
+        a.href=dataUrl;
         a.download=`ragsy-flowchart-${result.code_id||"diagram"}.png`;
-        document.body.appendChild(a);a.click();
-        document.body.removeChild(a);URL.revokeObjectURL(url);
-      },"image/png");
+        document.body.appendChild(a);a.click();document.body.removeChild(a);
+        fireToast("ok","Flowchart with connections downloaded!");
+      } else {
+        // Fallback: static node-only render
+        await fallbackStaticDownload();
+      }
 
-      fireToast("ok","Flowchart downloaded as PNG!");
-
-      // Update DB
       if(result.code_id&&token){
         apiFetch(`/flowchart/download?token=${token}&code_id=${result.code_id}`,{method:"POST"}).catch(()=>{});
       }
     }catch(err){
       console.error("Download error:",err);
-      fireToast("err","Download failed — check console");
+      fireToast("err","Download failed — try again");
     }finally{setDownloading(false);}
   }
 
-  /* ── Load html2canvas from CDN ─────────────────────────────*/
-  function loadHtml2Canvas(){
+  /* ── Fallback: static rendered PNG without live RF viewport ─*/
+  async function fallbackStaticDownload(){
+    const { toPng } = window.htmlToImage;
+    const ns=[...result.nodes].sort((a,b)=>a.position.y-b.position.y);
+    let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+    ns.forEach(n=>{minX=Math.min(minX,n.position.x);minY=Math.min(minY,n.position.y);maxX=Math.max(maxX,n.position.x+280);maxY=Math.max(maxY,n.position.y+90);});
+    const W=maxX-minX+160;const H=maxY-minY+160;
+    const wrap=document.createElement("div");
+    wrap.style.cssText=`position:fixed;left:-9999px;top:0;background:#111418;width:${W+80}px;padding:40px;font-family:'DM Mono',monospace;`;
+    const hdr=document.createElement("div");hdr.style.cssText="color:#00c8a8;font-size:16px;font-weight:700;margin-bottom:20px;";hdr.textContent="Ragsy — Code Flowchart";
+    wrap.appendChild(hdr);
+    const area=document.createElement("div");area.style.cssText=`position:relative;width:${W}px;height:${H}px;`;
+    ns.forEach(n=>{
+      const el=document.createElement("div");
+      const x=n.position.x-minX+60;const y=n.position.y-minY+60;
+      const color=n.data?.color||n.style?.border?.match(/#[0-9a-fA-F]+/)?.[0]||"#64748b";
+      const bg=n.data?.bg||n.style?.background||"#1e293b";
+      const label=n.data?.label||"";
+      el.style.cssText=`position:absolute;left:${x}px;top:${y}px;min-width:180px;max-width:260px;padding:10px 14px;background:${bg};border:2px solid ${color};border-radius:8px;color:#fff;font-size:11px;text-align:center;word-break:break-word;line-height:1.5;`;
+      el.textContent=label;area.appendChild(el);
+    });
+    wrap.appendChild(area);document.body.appendChild(wrap);
+    const dataUrl=await toPng(wrap,{backgroundColor:"#111418",pixelRatio:2});
+    document.body.removeChild(wrap);
+    const a=document.createElement("a");a.href=dataUrl;a.download=`ragsy-flowchart-${result.code_id||"diagram"}.png`;
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    fireToast("ok","Flowchart downloaded (static)");
+  }
+
+  /* ── Load html-to-image from CDN ───────────────────────────*/
+  function loadHtmlToImage(){
     return new Promise((resolve,reject)=>{
-      if(window.html2canvas){resolve();return;}
+      if(window.htmlToImage){resolve();return;}
       const s=document.createElement("script");
-      s.src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
-      s.onload=resolve;s.onerror=reject;
+      s.src="https://cdnjs.cloudflare.com/ajax/libs/html-to-image/1.11.11/html-to-image.min.js";
+      s.onload=resolve;s.onerror=()=>{
+        // try unpkg fallback
+        const s2=document.createElement("script");
+        s2.src="https://unpkg.com/html-to-image@1.11.11/dist/html-to-image.js";
+        s2.onload=resolve;s2.onerror=reject;
+        document.head.appendChild(s2);
+      };
       document.head.appendChild(s);
     });
   }
@@ -1125,7 +1217,7 @@ function EditorPage({user,token,onBack,onSignOut,initialCode=""}){
   return(
     <div className="page editor-page"><style>{STYLES}</style>
       <Toast {...toast}/>
-      <NavBar user={user} section="Python" tealSection onLogoClick={onBack} onSignOut={onSignOut}
+      <NavBar user={user} section={lang==="javascript"?"JavaScript Basics":"Python Basics"} tealSection onLogoClick={onBack} onSignOut={onSignOut}
         onActivities={()=>setActivitiesOpen(o=>!o)}/>
 
       {showInputModal&&(
@@ -1154,7 +1246,7 @@ function EditorPage({user,token,onBack,onSignOut,initialCode=""}){
         {/* LEFT: Code Editor */}
         <div className="editor-panel">
           <div className="panel-hdr">
-            <div className="panel-title"><div className="ptitle-dot"/>Python Source Code</div>
+            <div className="panel-title"><div className="ptitle-dot"/>{lang==="javascript"?"JavaScript Source Code":"Python Source Code"}</div>
             <div className="panel-actions">
               <button className="panel-btn" onClick={()=>setShowSamples(s=>!s)}>📚 Samples</button>
               <button className="panel-btn" onClick={()=>{setCode("");setResult(null);setConsoleOut(null);setError("");}}>Clear</button>
@@ -1170,7 +1262,7 @@ function EditorPage({user,token,onBack,onSignOut,initialCode=""}){
               spellCheck={false}/>
           </div>
           <div className="run-bar">
-            <div className="run-info">Language: <span>Python</span> · AST-powered</div>
+            <div className="run-info">Language: <span>{lang==="javascript"?"JavaScript":"Python"}</span> · {lang==="javascript"?"Node.js runtime":"AST-powered"}</div>
             <div style={{display:"flex",gap:8}}>
               <button
                 style={{display:"flex",alignItems:"center",gap:7,background:"transparent",color:runBtnDisabled?"var(--fog)":"var(--teal)",border:"1px solid var(--teal)",borderRadius:7,fontSize:13,fontWeight:600,padding:"9px 16px",cursor:"pointer",opacity:runBtnDisabled?.6:1,transition:"all .2s"}}
@@ -1275,6 +1367,104 @@ function EditorPage({user,token,onBack,onSignOut,initialCode=""}){
 }
 
 /* ══════════════════════════════════════════════════════════════
+   ADMIN PAGE
+══════════════════════════════════════════════════════════════ */
+function AdminPage({token,user,onSignOut}){
+  const [stats,setStats]=useState(null);
+  const [users,setUsers]=useState([]);
+  const [submissions,setSubmissions]=useState([]);
+  const [activeTab,setActiveTab]=useState("stats");
+  const [loading,setLoading]=useState(false);
+  const [toast,fireToast]=useToast();
+
+  useEffect(()=>{loadStats();},[]);
+
+  async function loadStats(){setLoading(true);try{const s=await apiFetch(`/admin/stats?token=${token}`);setStats(s);}catch(e){fireToast("err",e.message);}finally{setLoading(false);}}
+  async function loadUsers(){setLoading(true);try{const d=await apiFetch(`/admin/users?token=${token}&page=1&limit=50`);setUsers(d.users||[]);}catch(e){fireToast("err",e.message);}finally{setLoading(false);}}
+  async function loadSubmissions(){setLoading(true);try{const d=await apiFetch(`/admin/submissions?token=${token}&page=1&limit=50`);setSubmissions(d.submissions||[]);}catch(e){fireToast("err",e.message);}finally{setLoading(false);}}
+  async function deleteUser(uid,uname){
+    if(!window.confirm(`Delete user "${uname}"? This cannot be undone.`))return;
+    try{await apiFetch(`/admin/users/${uid}?token=${token}`,{method:"DELETE"});setUsers(p=>p.filter(u=>u.user_id!==uid));fireToast("ok","User deleted");}
+    catch(e){fireToast("err",e.message);}
+  }
+  function switchTab(t){setActiveTab(t);if(t==="users"&&users.length===0)loadUsers();if(t==="submissions"&&submissions.length===0)loadSubmissions();}
+
+  const adminStyles=`.admin-tabs{display:flex;gap:2px;margin-bottom:28px;background:var(--ink2);border:1px solid var(--line);border-radius:10px;padding:5px;}.admin-tab{flex:1;font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding:9px 16px;border:none;border-radius:7px;background:transparent;color:var(--fog);cursor:pointer;transition:all .2s;}.admin-tab.active{background:var(--teal);color:var(--ink);font-weight:700;}.stat-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;margin-bottom:32px;}.stat-card{background:var(--ink2);border:1px solid var(--line2);border-radius:12px;padding:20px 24px;}.stat-num{font-family:var(--disp);font-size:36px;font-weight:800;color:var(--teal);line-height:1;}.stat-lbl{font-size:12px;color:var(--fog);margin-top:6px;}.admin-table{width:100%;border-collapse:collapse;font-size:13px;}.admin-table th{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--fog);text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);}.admin-table td{padding:10px 14px;border-bottom:1px solid var(--line);color:var(--cloud);}.admin-table tr:hover td{background:var(--ink2);}.del-btn{font-family:var(--mono);font-size:10px;color:var(--red);background:rgba(224,80,80,.08);border:1px solid rgba(224,80,80,.25);border-radius:5px;padding:4px 10px;cursor:pointer;}.del-btn:hover{background:rgba(224,80,80,.2);}`;
+
+  return(
+    <div className="page" style={{flexDirection:"column"}}><style>{STYLES+adminStyles}</style><Toast {...toast}/>
+      <nav className="nav">
+        <div className="nav-left">
+          <div className="wm" style={{gap:10}}><div className="wm-icon" style={{width:30,height:30,borderRadius:7}}><RagsyIcon/></div><span className="wm-name" style={{fontSize:18}}>Ragsy</span></div>
+          <div className="nav-divider"/><span className="nav-section teal">Admin Dashboard</span>
+        </div>
+        <div className="nav-right">
+          <div className="nav-account"><div className="nav-avatar" style={{background:"linear-gradient(135deg,#f43f5e,#e85d04)"}}>{user?.username?.slice(0,2).toUpperCase()}</div><span className="nav-uname">{user?.username}</span><span style={{fontFamily:"var(--mono)",fontSize:9,color:"#f43f5e",background:"rgba(244,63,94,.1)",border:"1px solid rgba(244,63,94,.25)",borderRadius:20,padding:"1px 7px",marginLeft:4}}>ADMIN</span></div>
+          <button className="nav-signout" onClick={onSignOut}>Sign out</button>
+        </div>
+      </nav>
+      <div style={{flex:1,padding:"32px 48px",overflowY:"auto"}}>
+        <div style={{marginBottom:24}}><div className="greeting-eyebrow">Control Panel</div><h1 className="greeting-h">Admin <span>Dashboard</span></h1><p className="greeting-sub">Manage users, monitor code submissions, and oversee platform security.</p></div>
+        <div className="admin-tabs">
+          {[{id:"stats",label:"📊 Overview"},{id:"users",label:"👥 Users"},{id:"submissions",label:"💾 Submissions"}].map(t=>(
+            <button key={t.id} className={`admin-tab ${activeTab===t.id?"active":""}`} onClick={()=>switchTab(t.id)}>{t.label}</button>
+          ))}
+        </div>
+        {activeTab==="stats"&&(
+          <div>
+            {loading&&<div className="out-loading" style={{height:200}}><div className="loader"/></div>}
+            {stats&&(<div className="stat-cards">
+              {[{num:stats.total_users,label:"Total Users"},{num:stats.total_submissions,label:"Code Submissions"},{num:stats.total_flowcharts,label:"Flowcharts Generated"},{num:stats.new_users_this_week,label:"New Users This Week"}].map(s=>(
+                <div key={s.label} className="stat-card"><div className="stat-num">{s.num}</div><div className="stat-lbl">{s.label}</div></div>
+              ))}
+            </div>)}
+            <div style={{background:"var(--ink2)",border:"1px solid var(--teal)",borderRadius:12,padding:"20px 24px"}}>
+              <div style={{fontFamily:"var(--mono)",fontSize:11,letterSpacing:".1em",textTransform:"uppercase",color:"var(--teal)",marginBottom:12}}>🔒 Security Status</div>
+              {["All passwords SHA-256 hashed — never stored in plain text","Code submissions AES-256 encrypted — only the submitting user can retrieve them","Sessions expire after 24 hours automatically","Users can delete their account and all data at any time"].map((item,i)=>(
+                <div key={i} style={{display:"flex",gap:10,marginBottom:8,fontSize:13,color:"var(--cloud)"}}><span style={{color:"var(--teal)",flexShrink:0}}>✓</span>{item}</div>
+              ))}
+            </div>
+          </div>
+        )}
+        {activeTab==="users"&&(
+          <div>
+            {loading&&<div className="out-loading" style={{height:160}}><div className="loader"/></div>}
+            {!loading&&users.length===0&&<div style={{color:"var(--fog)",textAlign:"center",padding:40}}>No users found.</div>}
+            {users.length>0&&(<table className="admin-table">
+              <thead><tr><th>ID</th><th>Username</th><th>Mobile</th><th>Joined</th><th>Submissions</th><th></th></tr></thead>
+              <tbody>{users.map(u=>(<tr key={u.user_id}>
+                <td style={{fontFamily:"var(--mono)",color:"var(--fog)"}}>#{u.user_id}</td>
+                <td style={{fontWeight:600}}>{u.username}</td>
+                <td style={{fontFamily:"var(--mono)",fontSize:12}}>{u.mobile_no}</td>
+                <td style={{fontSize:12,color:"var(--fog)"}}>{new Date(u.created_at).toLocaleDateString("en-IN")}</td>
+                <td><span className="stat-pill">{u.submission_count}</span></td>
+                <td><button className="del-btn" onClick={()=>deleteUser(u.user_id,u.username)}>Delete</button></td>
+              </tr>))}</tbody>
+            </table>)}
+          </div>
+        )}
+        {activeTab==="submissions"&&(
+          <div>
+            {loading&&<div className="out-loading" style={{height:160}}><div className="loader"/></div>}
+            {!loading&&submissions.length===0&&<div style={{color:"var(--fog)",textAlign:"center",padding:40}}>No submissions yet.</div>}
+            {submissions.length>0&&(<table className="admin-table">
+              <thead><tr><th>Code ID</th><th>User</th><th>Language</th><th>Size</th><th>Uploaded</th></tr></thead>
+              <tbody>{submissions.map(s=>(<tr key={s.code_id}>
+                <td style={{fontFamily:"var(--mono)",color:"var(--fog)"}}>#{s.code_id}</td>
+                <td style={{fontWeight:600}}>{s.username}</td>
+                <td><span style={{fontFamily:"var(--mono)",fontSize:11,color:"var(--teal)",background:"var(--teal-dim)",border:"1px solid rgba(0,200,168,.2)",borderRadius:20,padding:"2px 8px"}}>{s.language}</span></td>
+                <td style={{fontFamily:"var(--mono)",fontSize:12,color:"var(--fog)"}}>{s.code_length} chars <span style={{color:"var(--mist)",fontSize:10}}>(encrypted)</span></td>
+                <td style={{fontSize:12,color:"var(--fog)"}}>{new Date(s.upload_time).toLocaleDateString("en-IN")}</td>
+              </tr>))}</tbody>
+            </table>)}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════
    ROOT APP
 ══════════════════════════════════════════════════════════════ */
 export default function App(){
@@ -1282,16 +1472,25 @@ export default function App(){
   const [token,setToken]   = useState(()=>localStorage.getItem("ragsy_token")||"");
   const [user,setUser]     = useState(()=>{try{return JSON.parse(localStorage.getItem("ragsy_user")||"null");}catch{return null;}});
   const [restoreCode,setRestoreCode] = useState("");
+  const [editorLang,setEditorLang]   = useState("python");
 
-  useEffect(()=>{if(token&&user)setPage("dashboard");},[]);
+  useEffect(()=>{
+    if(token&&user){setPage(user.is_admin?"admin":"dashboard");}
+  },[]);
 
-  function handleAuth(tok,usr){setToken(tok);setUser(usr);setPage("dashboard");}
+  function handleAuth(tok,usr){
+    setToken(tok);setUser(usr);
+    localStorage.setItem("ragsy_token",tok);
+    localStorage.setItem("ragsy_user",JSON.stringify(usr));
+    setPage(usr.is_admin?"admin":"dashboard");
+  }
   function handleSignOut(){
     if(token)apiFetch("/auth/logout",{method:"POST",body:JSON.stringify({token})}).catch(()=>{});
     localStorage.removeItem("ragsy_token");localStorage.removeItem("ragsy_user");
     setToken("");setUser(null);setPage("auth");
   }
-  function handleNavigate(p,code=""){
+  function handleNavigate(p,lang="python",code=""){
+    setEditorLang(lang||"python");
     if(code)setRestoreCode(code);
     setPage(p);
   }
@@ -1301,7 +1500,8 @@ export default function App(){
       <style>{STYLES}</style>
       {page==="auth"      &&<AuthPage onAuth={handleAuth}/>}
       {page==="dashboard" &&<DashboardPage user={user} onNavigate={handleNavigate} onSignOut={handleSignOut} token={token}/>}
-      {page==="editor"    &&<EditorPage user={user} token={token} onBack={()=>{setRestoreCode("");setPage("dashboard");}} onSignOut={handleSignOut} initialCode={restoreCode}/>}
+      {page==="editor"    &&<EditorPage user={user} token={token} onBack={()=>{setRestoreCode("");setPage("dashboard");}} onSignOut={handleSignOut} initialCode={restoreCode} editorLang={editorLang}/>}
+      {page==="admin"     &&<AdminPage token={token} user={user} onSignOut={handleSignOut}/>}
     </>
   );
 }

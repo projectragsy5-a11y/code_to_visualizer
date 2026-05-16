@@ -3,6 +3,7 @@
 ## Setup & Run
 
 ```bash
+#Install python 3.12
 # 1. Create virtual environment
 python -m venv venv
 

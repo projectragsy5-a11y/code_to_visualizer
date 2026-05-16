@@ -3,7 +3,7 @@
 ```bash
 #Install Node.js
  node-v20.19.1-x64 
-#In terminal run
+#In windows powershell run as a administrator 
 npm install
 npm install
 npm install dagre

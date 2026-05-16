@@ -18,6 +18,7 @@ pip install -r requirements.txt
 
 # 4. Run the server
 python main.py
+uvicorn main:app --reload --port 8000
 ```
 
 Server runs at: http://localhost:8000

@@ -1,4 +1,28 @@
+# ── Core API Framework ───────────────────────────────────────────────
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
 pydantic==2.7.1
 python-multipart==0.0.9
+
+# ── Database ─────────────────────────────────────────────────────────
+pyodbc==5.1.0                  # SQL Server (development)
+psycopg2-binary==2.9.9         # PostgreSQL (production / Supabase)
+
+# ── Security & Encryption ────────────────────────────────────────────
+cryptography==42.0.8           # Fernet AES-256 encryption for code submissions
+
+# ── Environment Variables ────────────────────────────────────────────
+python-dotenv==1.0.1           # Load .env file (DB_SERVER, ENCRYPTION_KEY, etc.)
+
+# ── HTTP Requests ────────────────────────────────────────────────────
+requests==2.32.3               # Fast2SMS OTP API calls, external HTTP requests
+
+# ── SMS OTP Providers ────────────────────────────────────────────────
+twilio==9.1.0                  # Twilio SMS OTP (optional fallback provider)
+firebase-admin==6.5.0          # Firebase Phone Auth — SMS OTP verification
+
+# ── CORS Middleware ──────────────────────────────────────────────────
+# Already included in fastapi — no separate install needed
+
+# ── Code Execution (built-in Python modules — no install needed) ─────
+# subprocess, ast, hashlib, tempfile, io, re, json, os — all built-in

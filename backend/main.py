@@ -327,42 +327,72 @@ app.add_middleware(CORSMiddleware,
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 # ── SMS ───────────────────────────────────────────────────────────
-FAST2SMS_KEY = os.getenv("FAST2SMS_API_KEY", "")
-TWILIO_SID   = os.getenv("TWILIO_ACCOUNT_SID", "")
-TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
-TWILIO_FROM  = os.getenv("TWILIO_FROM_NUMBER", "")
+# Provider keys — set in .env file
+TWOFACTOR_KEY = os.getenv("TWOFACTOR_API_KEY", "")   # 2Factor.in  (free Indian OTP)
+FAST2SMS_KEY  = os.getenv("FAST2SMS_API_KEY",  "")   # Fast2SMS    (free Indian OTP)
+TWILIO_SID    = os.getenv("TWILIO_ACCOUNT_SID",  "")
+TWILIO_TOKEN  = os.getenv("TWILIO_AUTH_TOKEN",   "")
+TWILIO_FROM   = os.getenv("TWILIO_FROM_NUMBER",  "")
 
 def send_sms(to_number: str, otp: str) -> dict:
+    """Try SMS providers in order: 2Factor → Fast2SMS → Twilio → dev console."""
     digits   = re.sub(r"[^0-9]", "", to_number)
     indian10 = digits[-10:] if len(digits) >= 10 else digits
-    message  = f"Your Ragsy OTP is {otp}. Valid for 5 minutes. Do not share."
+    message  = f"Your Ragsy OTP is {otp}. Valid for 5 minutes. Do not share with anyone."
+
+    # ── Provider 1: 2Factor.in (best free Indian SMS OTP) ─────────
+    # Sign up free at https://2factor.in — get your API key from dashboard
+    # Free plan: 10 OTP SMS/day, no credit card needed
+    if TWOFACTOR_KEY:
+        try:
+            r = http_requests.get(
+                f"https://2factor.in/API/V1/{TWOFACTOR_KEY}/SMS/{indian10}/{otp}/Ragsy",
+                timeout=10
+            )
+            d = r.json()
+            if d.get("Status") == "Success":
+                print(f"[SMS OK 2Factor] -> {indian10}")
+                return {"sent": True, "provider": "2factor", "error": None}
+            print(f"[SMS FAIL 2Factor] {d}")
+            return {"sent": False, "provider": "2factor", "error": str(d.get("Details", d))}
+        except Exception as e:
+            print(f"[SMS ERR 2Factor] {e}")
+
+    # ── Provider 2: Fast2SMS ───────────────────────────────────────
+    # Sign up free at https://fast2sms.com — get API key from dashboard
+    # Free plan: 50 SMS credits on signup
     if FAST2SMS_KEY:
         try:
             r = http_requests.post(
                 "https://www.fast2sms.com/dev/bulkV2",
                 headers={"authorization": FAST2SMS_KEY},
-                json={"route":"otp","variables_values":otp,"flash":0,"numbers":indian10},
-                timeout=10)
+                json={"route": "otp", "variables_values": otp, "flash": 0, "numbers": indian10},
+                timeout=10
+            )
             d = r.json()
             if d.get("return") == True:
                 print(f"[SMS OK Fast2SMS] -> {indian10}")
-                return {"sent":True,"provider":"fast2sms","error":None}
+                return {"sent": True, "provider": "fast2sms", "error": None}
             print(f"[SMS FAIL Fast2SMS] {d}")
-            return {"sent":False,"provider":"fast2sms","error":str(d.get("message",d))}
+            return {"sent": False, "provider": "fast2sms", "error": str(d.get("message", d))}
         except Exception as e:
             print(f"[SMS ERR Fast2SMS] {e}")
+
+    # ── Provider 3: Twilio ─────────────────────────────────────────
     if TWILIO_SID and TWILIO_TOKEN and TWILIO_FROM:
         try:
             from twilio.rest import Client
             Client(TWILIO_SID, TWILIO_TOKEN).messages.create(
                 body=message, from_=TWILIO_FROM, to=to_number)
             print(f"[SMS OK Twilio] -> {to_number}")
-            return {"sent":True,"provider":"twilio","error":None}
+            return {"sent": True, "provider": "twilio", "error": None}
         except Exception as e:
             print(f"[SMS ERR Twilio] {e}")
-            return {"sent":False,"provider":"twilio","error":str(e)}
-    print(f"[DEV OTP] {to_number} => {otp}")
-    return {"sent":False,"provider":"console","error":"No SMS provider configured"}
+            return {"sent": False, "provider": "twilio", "error": str(e)}
+
+    # ── No provider configured — show OTP in response (dev mode) ──
+    print(f"[DEV OTP] {to_number} => {otp}  (set TWOFACTOR_API_KEY in .env to send real SMS)")
+    return {"sent": False, "provider": "console", "error": "No SMS provider configured"}
 
 # ── Pydantic Models ───────────────────────────────────────────────
 class RegisterRequest(BaseModel):

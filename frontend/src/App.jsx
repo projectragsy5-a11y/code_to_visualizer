@@ -33,7 +33,7 @@ async function applyDagreLayout(nodes, edges) {
 /* ══════════════════════════════════════════════════════════════
    API
 ══════════════════════════════════════════════════════════════ */
-const BASE = "";
+const BASE = "http://localhost:8000";
 async function apiFetch(path, opts = {}) {
   const res = await fetch(`${BASE}${path}`, {
     headers: { "Content-Type": "application/json", ...(opts.headers||{}) },
@@ -421,7 +421,7 @@ function LoginView({onSwitch,onSuccess,toast,registeredUsername}){
       {registeredUsername&&(<div className="success-box"><span className="success-box-icon">🎉</span><div className="success-box-text"><span className="success-box-title">Account created!</span><span className="success-box-sub">Welcome, <strong>{registeredUsername}</strong>! Sign in to continue.</span></div></div>)}
       {error&&<div className="err-box">{error}</div>}
       <form onSubmit={doLogin} autoComplete="off">
-        <div className="field"><div className="flabel">Username</div><div className="inp-wrap"><span className="inp-icon"><IconUser/></span><input value={username} onChange={e=>setUsername(e.target.value)} placeholder="your_handle" autoComplete="off" name="ragsy-u"/></div></div>
+        <div className="field"><div className="flabel">Username</div><div className="inp-wrap"><span className="inp-icon"><IconUser/></span><input value={username} onChange={e=>setUsername(e.target.value)} placeholder="Enter your username" autoComplete="off" name="ragsy-u"/></div></div>
         <div className="field"><div className="flabel">Password</div><div className="inp-wrap"><span className="inp-icon"><IconLock/></span><input type={showPass?"text":"password"} value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" autoComplete="new-password" name="ragsy-p" autoFocus={!!registeredUsername}/><button type="button" className="inp-toggle" onClick={()=>setShowPass(p=>!p)}>{showPass?"hide":"show"}</button></div></div>
         <button className="btn-primary" type="submit" disabled={loading}>{loading?"Signing in…":"Sign In →"}</button>
       </form>

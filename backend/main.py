@@ -591,10 +591,22 @@ def admin_stats(token: str):
         cur.execute("SELECT COUNT(*) FROM USERS WHERE is_admin=0"); total_users = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM CODE_SUBMISSIONS"); total_sub = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM FLOWCHARTS"); total_fc = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM EXPLANATIONS"); total_exp = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM CODE_SUBMISSIONS WHERE language='python'"); py_count = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM CODE_SUBMISSIONS WHERE language='javascript'"); js_count = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM USERS WHERE created_at >= DATEADD(day,-7,GETUTCDATE()) AND is_admin=0")
         new_week = cur.fetchone()[0]
-        return {"total_users": total_users, "total_submissions": total_sub,
-                "total_flowcharts": total_fc, "new_users_this_week": new_week}
+        cur.execute("SELECT COALESCE(SUM(download_count),0) FROM EXPLANATIONS"); total_downloads = cur.fetchone()[0]
+        return {
+            "total_users": total_users,
+            "total_submissions": total_sub,
+            "total_flowcharts": total_fc,
+            "total_explanations": total_exp,
+            "python_submissions": py_count,
+            "javascript_submissions": js_count,
+            "total_downloads": total_downloads,
+            "new_users_this_week": new_week
+        }
     finally:
         conn.close()
 
@@ -957,21 +969,21 @@ def run_code_safe(code: str, user_inputs: list = []) -> dict:
 
 def run_js_safe(code: str, user_inputs: list = []) -> dict:
     """Run JavaScript via Node.js with 5-second timeout."""
-    # Check Node.js is available
     try:
         subprocess.run(["node", "--version"], capture_output=True, timeout=3)
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        return {"status":"error","stdout":"","stderr":"Node.js not found. Install Node.js to run JavaScript.",
+        return {"status":"error","stdout":"","stderr":"Node.js not found. Please install Node.js to run JavaScript.",
                 "elapsed_ms":0,"error":"Node.js not installed","prompts_hit":[]}
 
-    # Build safe wrapper: inject inputs array and mock prompt/readline
+    # Inject input helper + user code
     header = (
-        "const __inputs = " + json.dumps(user_inputs) + ";\n"
+        "const __inputs = " + json.dumps([str(x) for x in user_inputs]) + ";\n"
         "let __inputIdx = 0;\n"
-        "function prompt(msg='') { const v = __inputs[__inputIdx++] ?? ''; process.stdout.write(String(msg) + v + '\\n'); return String(v); }\n"
-        "const readline = { question: (q, cb) => { const v = __inputs[__inputIdx++] ?? ''; cb(v); } };\n"
+        "const prompt = (msg='') => { const v = __inputs[__inputIdx++] ?? ''; if(msg) process.stdout.write(String(msg)); return String(v); };\n"
+        "const input  = (msg='') => prompt(msg);\n"
+        "const readline = { question: (q, cb) => { const v = __inputs[__inputIdx++] ?? ''; cb(String(v)); } };\n"
     )
-    full_code = header + code
+    full_code = header + "\n" + code
 
     with tempfile.NamedTemporaryFile(suffix=".js", delete=False, mode='w', encoding='utf-8') as f:
         f.write(full_code)
@@ -979,14 +991,21 @@ def run_js_safe(code: str, user_inputs: list = []) -> dict:
 
     start = datetime.utcnow()
     try:
-        result = subprocess.run(["node", fname], capture_output=True, text=True, timeout=5)
+        result = subprocess.run(["node", fname], capture_output=True, text=True, timeout=5, encoding='utf-8')
         elapsed = int((datetime.utcnow() - start).total_seconds() * 1000)
+        stderr = result.stderr.strip()
+        # Clean up internal node paths from error messages for both Linux and Windows
+        if stderr:
+            stderr = re.sub(r"at .+\n?", "", stderr).strip()
+            stderr = re.sub(r"[A-Za-z]?:?[/\\]tmp[/\\][^\s:]+:", "line ", stderr)
+            stderr = re.sub(r"[A-Za-z]:\\Users\\[^\\]+\\AppData\\Local\\Temp\\[^\s:]+:", "line ", stderr)
+            stderr = re.sub(r"\n{2,}", "\n", stderr).strip()
         return {
             "status": "error" if result.returncode != 0 else "success",
             "stdout": result.stdout,
-            "stderr": result.stderr,
+            "stderr": stderr,
             "elapsed_ms": elapsed,
-            "error": result.stderr if result.returncode != 0 else None,
+            "error": stderr if result.returncode != 0 else None,
             "prompts_hit": []
         }
     except subprocess.TimeoutExpired:
@@ -1014,8 +1033,10 @@ async def run_code(request: RunRequest, token: str = ""):
     if not code: raise HTTPException(400, detail="Code cannot be empty")
 
     if lang == "javascript":
+        # JS does NOT use Python's ast.parse — run directly via Node.js
         result = run_js_safe(code, request.user_inputs or [])
     else:
+        # Python — validate syntax first with AST
         try: ast.parse(code)
         except SyntaxError as e:
             return {"status":"error","stdout":"","stderr":f"SyntaxError at line {e.lineno}: {e.msg}",
@@ -1027,47 +1048,175 @@ async def run_code(request: RunRequest, token: str = ""):
         db_log(rec["user_id"], f"run_{lang}")
     return result
 
+# ══════════════════════════════════════════════════════════════════
+# JAVASCRIPT FLOWCHART PARSER
+# ══════════════════════════════════════════════════════════════════
+def parse_js_to_graph(code: str):
+    """Parse JavaScript code into flowchart nodes and edges."""
+    _ctr[0] = 0
+    nodes = []
+    edges = []
+    lines = code.splitlines()
+
+    # Start node
+    start_id = nid()
+    nodes.append({"id": start_id, "type": "input",
+        "data": {"label": "▶  START"},
+        "position": {"x": 300, "y": 0},
+        "style": {"background":"#0f172a","color":"#fff","border":"2px solid #38bdf8",
+                  "borderRadius":"50px","padding":"12px 28px","fontWeight":"bold",
+                  "fontSize":"14px","textAlign":"center","minWidth":"140px",
+                  "boxShadow":"0 0 24px #38bdf888","fontFamily":"'Fira Code',monospace"}})
+
+    prev_id = start_id
+    y = 130
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+
+        node_id = nid()
+        label = stripped[:60] + ("…" if len(stripped) > 60 else "")
+
+        # Determine node type and color
+        if re.match(r"^(if|else if)\s*\(", stripped):
+            color = "#fca5a5"; bg = "#7f1d1d"; shape = "diamond"
+            label = re.sub(r"\s*\{.*", "", stripped)
+        elif stripped.startswith("else"):
+            color = "#93c5fd"; bg = "#1e3a5f"; shape = "diamond"
+            label = "else"
+        elif re.match(r"^(for|while)\s*\(", stripped):
+            color = "#34d399"; bg = "#064e3b"; shape = "diamond"
+            label = re.sub(r"\s*\{.*", "", stripped)
+        elif re.match(r"^(function|const\s+\w+\s*=\s*(async\s*)?\(|let\s+\w+\s*=\s*function)", stripped):
+            color = "#a78bfa"; bg = "#4c1d95"; shape = "default"
+            label = re.sub(r"\{.*", "", stripped).strip()
+        elif re.match(r"^return\s", stripped):
+            color = "#fb923c"; bg = "#7c2d12"; shape = "default"
+        elif re.match(r"^(console\.log|console\.error|console\.warn|alert)\s*\(", stripped):
+            color = "#60a5fa"; bg = "#1e3a5f"; shape = "parallelogram"
+        elif re.match(r"^(const|let|var)\s", stripped):
+            color = "#38bdf8"; bg = "#0c4a6e"; shape = "default"
+        elif stripped in ["}", "};", "});"]:
+            continue
+        else:
+            color = "#64748b"; bg = "#1e293b"; shape = "default"
+
+        nodes.append({"id": node_id,
+            "data": {"label": label},
+            "position": {"x": 300, "y": y},
+            "style": {"background": bg, "color": "#fff",
+                      "border": f"2px solid {color}",
+                      "borderRadius": "8px", "padding": "10px 16px",
+                      "fontSize": "12px", "textAlign": "center",
+                      "minWidth": "180px", "maxWidth": "280px",
+                      "fontFamily": "'Fira Code',monospace",
+                      "boxShadow": f"0 0 12px {color}44"}})
+        edges.append(make_edge(prev_id, node_id, color=color))
+        prev_id = node_id
+        y += 130
+
+    # End node
+    end_id = nid()
+    nodes.append({"id": end_id, "type": "output",
+        "data": {"label": "■  END"},
+        "position": {"x": 300, "y": y},
+        "style": {"background":"#0f172a","color":"#fff","border":"2px solid #f43f5e",
+                  "borderRadius":"50px","padding":"12px 28px","fontWeight":"bold",
+                  "fontSize":"14px","textAlign":"center","minWidth":"140px",
+                  "boxShadow":"0 0 24px #f43f5e88","fontFamily":"'Fira Code',monospace"}})
+    edges.append(make_edge(prev_id, end_id, color="#f43f5e"))
+    return nodes, edges
+
+
+def js_plain_explanation(code: str) -> list:
+    """Generate plain English explanation for JavaScript code."""
+    lines = code.splitlines()
+    steps = []
+    sn = 1
+    for line in lines:
+        s = line.strip()
+        if not s or s.startswith("//"): continue
+        if re.match(r"^function\s+(\w+)", s):
+            m = re.match(r"^function\s+(\w+)", s)
+            steps.append(f"Step {sn}: Defines a function called '{m.group(1)}'.")
+        elif re.match(r"^(const|let|var)\s+(\w+)\s*=", s):
+            m = re.match(r"^(const|let|var)\s+(\w+)\s*=\s*(.+)", s)
+            if m: steps.append(f"Step {sn}: Creates a variable '{m.group(2)}' with value {m.group(3).rstrip(';')[:40]}.")
+        elif re.match(r"^if\s*\(", s):
+            cond = re.sub(r"^if\s*\((.+)\)\s*\{?$", r"\1", s)
+            steps.append(f"Step {sn}: Checks condition — {cond[:50]}.")
+        elif re.match(r"^for\s*\(", s):
+            steps.append(f"Step {sn}: Starts a loop to repeat a block of code.")
+        elif re.match(r"^while\s*\(", s):
+            steps.append(f"Step {sn}: Repeats while condition is true.")
+        elif re.match(r"^console\.log\(", s):
+            steps.append(f"Step {sn}: Prints output to the console.")
+        elif re.match(r"^return\s", s):
+            steps.append(f"Step {sn}: Returns a value from the function.")
+        else:
+            continue
+        sn += 1
+    if not steps:
+        steps = ["This JavaScript program executes the given statements in sequence."]
+    return steps
+
+
 @app.post("/visualize")
 async def visualize_code(request: CodeRequest, token: str = ""):
     _ctr[0]=0; nodes=[]; edges=[]; code=request.code.strip()
+    lang = (request.language or "python").lower()
     if not code: raise HTTPException(400, detail="Code cannot be empty")
 
     rec = sessions_db.get(token)
     uid = rec["user_id"] if rec else None
 
-    try: tree=ast.parse(code)
-    except SyntaxError as e: raise HTTPException(400, detail=f"SyntaxError line {e.lineno}: {e.msg}")
-    except Exception as e: raise HTTPException(400, detail=str(e))
+    # ── Parse based on language ───────────────────────────────────
+    if lang == "javascript":
+        # For JS: use a simple token-based flowchart (AST not available)
+        tree = None
+        try:
+            nodes, edges = parse_js_to_graph(code)
+        except Exception as e:
+            raise HTTPException(400, detail=f"JS parse error: {e}")
+    else:
+        try: tree = ast.parse(code)
+        except SyntaxError as e: raise HTTPException(400, detail=f"SyntaxError line {e.lineno}: {e.msg}")
+        except Exception as e: raise HTTPException(400, detail=str(e))
 
-    # Save CODE_SUBMISSION to DB
+    # Save submission to DB
     code_id = None
     if uid:
         try:
-            code_id = db_submission_save(uid, code, request.language)
+            code_id = db_submission_save(uid, code, lang)
         except Exception as e:
             print(f"[DB WARNING] submission save failed: {e}")
 
-    start_id=nid()
-    nodes.append({"id":start_id,"type":"input","data":{"label":"▶  START"},"position":{"x":300,"y":0},
-        "style":{"background":"#0f172a","color":"#fff","border":"2px solid #38bdf8","borderRadius":"50px",
-                 "padding":"12px 28px","fontWeight":"bold","fontSize":"14px","textAlign":"center",
-                 "minWidth":"140px","boxShadow":"0 0 24px #38bdf888","fontFamily":"'Fira Code',monospace"}})
-    last_id=parse_statements(tree.body,nodes,edges,start_id,300,130) if tree.body else start_id
-    end_y=max(n["position"]["y"] for n in nodes)+150; end_id=nid()
-    nodes.append({"id":end_id,"type":"output","data":{"label":"■  END"},"position":{"x":300,"y":end_y},
-        "style":{"background":"#0f172a","color":"#fff","border":"2px solid #f43f5e","borderRadius":"50px",
-                 "padding":"12px 28px","fontWeight":"bold","fontSize":"14px","textAlign":"center",
-                 "minWidth":"140px","boxShadow":"0 0 24px #f43f5e88","fontFamily":"'Fira Code',monospace"}})
-    edges.append(make_edge(last_id,end_id,color="#f43f5e"))
+    if lang == "javascript":
+        # nodes/edges already built by parse_js_to_graph
+        explanation = js_plain_explanation(code)
+    else:
+        start_id=nid()
+        nodes.append({"id":start_id,"type":"input","data":{"label":"▶  START"},"position":{"x":300,"y":0},
+            "style":{"background":"#0f172a","color":"#fff","border":"2px solid #38bdf8","borderRadius":"50px",
+                     "padding":"12px 28px","fontWeight":"bold","fontSize":"14px","textAlign":"center",
+                     "minWidth":"140px","boxShadow":"0 0 24px #38bdf888","fontFamily":"'Fira Code',monospace"}})
+        last_id=parse_statements(tree.body,nodes,edges,start_id,300,130) if tree.body else start_id
+        end_y=max(n["position"]["y"] for n in nodes)+150; end_id=nid()
+        nodes.append({"id":end_id,"type":"output","data":{"label":"■  END"},"position":{"x":300,"y":end_y},
+            "style":{"background":"#0f172a","color":"#fff","border":"2px solid #f43f5e","borderRadius":"50px",
+                     "padding":"12px 28px","fontWeight":"bold","fontSize":"14px","textAlign":"center",
+                     "minWidth":"140px","boxShadow":"0 0 24px #f43f5e88","fontFamily":"'Fira Code',monospace"}})
+        edges.append(make_edge(last_id,end_id,color="#f43f5e"))
+        explanation = plain_english_explanation(code, tree)
 
-    explanation = plain_english_explanation(code, tree)
-
-    # Save FLOWCHART + EXPLANATION to DB
+    # Save flowchart + explanation to DB
     if uid and code_id:
         try:
             db_flowchart_save(code_id, json.dumps({"nodes":nodes,"edges":edges}))
             db_explanation_save(code_id, json.dumps(explanation))
-            db_log(uid, "visualize")
+            db_log(uid, f"visualize_{lang}")
         except Exception as e:
             print(f"[DB WARNING] flowchart/explanation save failed: {e}")
 
@@ -1199,6 +1348,52 @@ def delete_account(token: str):
         conn.close()
     sessions_db.pop(token, None)
     return {"message": "Account and all associated data deleted."}
+
+# ══════════════════════════════════════════════════════════════════
+# TASKS — Beginner Learning Task Lists
+# ══════════════════════════════════════════════════════════════════
+PYTHON_TASKS = [
+    {"id":1,"title":"Print Hello World","description":"Write a program that prints 'Hello, World!' to the screen.","hint":"Use the print() function. Example: print('your text here')","expected_output":"Hello, World!","time_seconds":120,"difficulty":"Beginner","starter_code":"# Write your first Python program\n"},
+    {"id":2,"title":"Add Two Numbers","description":"Create variables num1=10 and num2=20, add them and print the result.","hint":"Use the + operator. Store the result in a variable called 'result' and print it.","expected_output":"30","time_seconds":180,"difficulty":"Beginner","starter_code":"# Create two number variables and add them\nnum1 = 10\nnum2 = 20\n# Add and print the result\n"},
+    {"id":3,"title":"Even or Odd","description":"Write a program that checks if the number 7 is even or odd and prints 'Even' or 'Odd'.","hint":"Use the modulus operator %. If num % 2 == 0, it is even, otherwise odd.","expected_output":"Odd","time_seconds":240,"difficulty":"Beginner","starter_code":"num = 7\n# Check if num is even or odd\n"},
+    {"id":4,"title":"Count 1 to 5","description":"Use a for loop to print numbers from 1 to 5, each on a new line.","hint":"Use range(1, 6) inside a for loop. range(start, end) goes up to but not including end.","expected_output":"1\n2\n3\n4\n5","time_seconds":240,"difficulty":"Beginner","starter_code":"# Use a for loop to count from 1 to 5\n"},
+    {"id":5,"title":"Simple Calculator Function","description":"Write a function called add(a, b) that returns the sum of two numbers. Call it with 4 and 6 and print the result.","hint":"Define using def add(a, b): and use return a + b inside. Then call print(add(4, 6)).","expected_output":"10","time_seconds":300,"difficulty":"Beginner","starter_code":"# Define your add function here\n\n# Call the function and print the result\n"},
+    {"id":6,"title":"Find the Largest Number","description":"Given a list numbers = [3, 7, 1, 9, 4], print the largest number without using max().","hint":"Use a loop and a variable to track the largest number seen so far.","expected_output":"9","time_seconds":360,"difficulty":"Intermediate","starter_code":"numbers = [3, 7, 1, 9, 4]\n# Find the largest number using a loop\n"},
+    {"id":7,"title":"Reverse a String","description":"Write a program that reverses the string 'Ragsy' and prints it.","hint":"You can use slicing: text[::-1] reverses any string.","expected_output":"ysgar","time_seconds":240,"difficulty":"Intermediate","starter_code":"text = 'Ragsy'\n# Reverse the string and print it\n"},
+    {"id":8,"title":"FizzBuzz","description":"Print numbers 1 to 20. For multiples of 3 print 'Fizz', for multiples of 5 print 'Buzz', for both print 'FizzBuzz'.","hint":"Use if/elif/else inside a for loop. Check % 15 == 0 first for FizzBuzz.","expected_output":"1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz\n16\n17\nFizz\n19\nBuzz","time_seconds":480,"difficulty":"Intermediate","starter_code":"# FizzBuzz from 1 to 20\nfor i in range(1, 21):\n    # Your code here\n    pass\n"},
+    {"id":9,"title":"Count Vowels","description":"Write a function count_vowels(text) that counts and returns the number of vowels in a string. Test with 'Hello World'.","hint":"Loop through each character and check if it is in 'aeiouAEIOU'.","expected_output":"3","time_seconds":420,"difficulty":"Intermediate","starter_code":"def count_vowels(text):\n    # Count vowels in text\n    pass\n\nprint(count_vowels('Hello World'))\n"},
+    {"id":10,"title":"Fibonacci Sequence","description":"Print the first 8 numbers of the Fibonacci sequence (0 1 1 2 3 5 8 13).","hint":"Each number is the sum of the two before it. Start with a=0 and b=1 in a loop.","expected_output":"0\n1\n1\n2\n3\n5\n8\n13","time_seconds":480,"difficulty":"Advanced","starter_code":"# Print first 8 Fibonacci numbers\na, b = 0, 1\n# Use a loop 8 times\n"},
+]
+
+JAVASCRIPT_TASKS = [
+    {"id":1,"title":"Print Hello World","description":"Write a program that prints 'Hello, World!' to the console.","hint":"Use console.log() function. Example: console.log('your text here')","expected_output":"Hello, World!","time_seconds":120,"difficulty":"Beginner","starter_code":"// Write your first JavaScript program\n"},
+    {"id":2,"title":"Add Two Numbers","description":"Create variables num1=10 and num2=20, add them and print the result.","hint":"Use let or const to declare variables. Use + to add them and console.log() to print.","expected_output":"30","time_seconds":180,"difficulty":"Beginner","starter_code":"// Create two variables and add them\nlet num1 = 10;\nlet num2 = 20;\n// Add and print the result\n"},
+    {"id":3,"title":"Even or Odd","description":"Check if the number 7 is even or odd and print 'Even' or 'Odd'.","hint":"Use the % operator. If num % 2 === 0 it is even, otherwise odd.","expected_output":"Odd","time_seconds":240,"difficulty":"Beginner","starter_code":"let num = 7;\n// Check if num is even or odd\n"},
+    {"id":4,"title":"Count 1 to 5","description":"Use a for loop to print numbers from 1 to 5, each on a new line.","hint":"Use for(let i = 1; i <= 5; i++) and console.log(i) inside.","expected_output":"1\n2\n3\n4\n5","time_seconds":240,"difficulty":"Beginner","starter_code":"// Use a for loop to count from 1 to 5\n"},
+    {"id":5,"title":"Simple Function","description":"Write a function called add(a, b) that returns the sum. Call it with 4 and 6 and print the result.","hint":"Use function add(a, b) { return a + b; } then console.log(add(4, 6)).","expected_output":"10","time_seconds":300,"difficulty":"Beginner","starter_code":"// Define your add function here\n\n// Call the function and print the result\n"},
+    {"id":6,"title":"Find the Largest Number","description":"Given an array numbers = [3, 7, 1, 9, 4], print the largest number without using Math.max().","hint":"Use a for loop and a variable 'largest' to track the maximum value.","expected_output":"9","time_seconds":360,"difficulty":"Intermediate","starter_code":"let numbers = [3, 7, 1, 9, 4];\n// Find the largest number using a loop\n"},
+    {"id":7,"title":"Reverse a String","description":"Reverse the string 'Ragsy' and print it.","hint":"Convert to array with split(''), reverse with reverse(), join back with join('').","expected_output":"ysgar","time_seconds":240,"difficulty":"Intermediate","starter_code":"let text = 'Ragsy';\n// Reverse the string and print it\n"},
+    {"id":8,"title":"FizzBuzz","description":"Print numbers 1 to 20. Multiples of 3 print 'Fizz', multiples of 5 print 'Buzz', both print 'FizzBuzz'.","hint":"Use if/else if/else inside a for loop. Check % 15 === 0 first.","expected_output":"1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz\n16\n17\nFizz\n19\nBuzz","time_seconds":480,"difficulty":"Intermediate","starter_code":"// FizzBuzz from 1 to 20\nfor(let i = 1; i <= 20; i++) {\n    // Your code here\n}\n"},
+    {"id":9,"title":"Count Vowels","description":"Write a function countVowels(text) that returns the number of vowels. Test with 'Hello World'.","hint":"Loop through each character and check if it is in 'aeiouAEIOU' using includes().","expected_output":"3","time_seconds":420,"difficulty":"Intermediate","starter_code":"function countVowels(text) {\n    // Count vowels in text\n}\n\nconsole.log(countVowels('Hello World'));\n"},
+    {"id":10,"title":"Fibonacci Sequence","description":"Print the first 8 numbers of the Fibonacci sequence (0 1 1 2 3 5 8 13).","hint":"Start with a=0 and b=1. Each iteration: print a, then update [a,b] = [b, a+b].","expected_output":"0\n1\n1\n2\n3\n5\n8\n13","time_seconds":480,"difficulty":"Advanced","starter_code":"// Print first 8 Fibonacci numbers\nlet a = 0, b = 1;\n// Use a loop 8 times\n"},
+]
+
+@app.get("/tasks")
+def get_tasks(language: str = "python"):
+    if language.lower() == "javascript":
+        return {"tasks": JAVASCRIPT_TASKS, "language": "javascript"}
+    return {"tasks": PYTHON_TASKS, "language": "python"}
+
+@app.post("/tasks/hint")
+async def get_task_hint(request: dict):
+    task_id = request.get("task_id")
+    language = request.get("language", "python")
+    tasks = JAVASCRIPT_TASKS if language == "javascript" else PYTHON_TASKS
+    task = next((t for t in tasks if t["id"] == task_id), None)
+    if not task:
+        raise HTTPException(404, detail="Task not found")
+    return {"hint": task["hint"], "starter_code": task["starter_code"]}
+
 
 if __name__=="__main__":
     test_db_connection()   # prints DB status on startup

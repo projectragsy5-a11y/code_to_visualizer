@@ -1030,6 +1030,35 @@ if result is not None:
 };
 
 /* ══════════════════════════════════════════════════════════════
+   TASK LISTS — Python Basics & JavaScript Basics
+══════════════════════════════════════════════════════════════ */
+const PY_TASKS=[
+  {id:1,title:"Hello World",level:"Beginner",time:120,desc:"Print 'Hello, World!' to the screen.",starter:"# Task 1: Hello World\n# Print Hello, World!\nprint('Hello, World!')"},
+  {id:2,title:"Add Two Numbers",level:"Beginner",time:180,desc:"Create two variables num1=10 and num2=20, add them and print the result.",starter:"# Task 2: Add Two Numbers\nnum1 = 10\nnum2 = 20\n# Add and print the result\n"},
+  {id:3,title:"Even or Odd",level:"Beginner",time:240,desc:"Check if the number 7 is even or odd and print 'Even' or 'Odd'.",starter:"# Task 3: Even or Odd\nnum = 7\n# Check if num is even or odd\n"},
+  {id:4,title:"FizzBuzz",level:"Beginner",time:300,desc:"Print numbers 1-20. For multiples of 3 print 'Fizz', for 5 print 'Buzz', for both print 'FizzBuzz'.",starter:"# Task 4: FizzBuzz\nfor i in range(1, 21):\n    # Check conditions and print\n    pass\n"},
+  {id:5,title:"Sum of List",level:"Beginner",time:240,desc:"Given numbers=[1,2,3,4,5], find and print the sum without using sum().",starter:"# Task 5: Sum of List\nnumbers = [1, 2, 3, 4, 5]\ntotal = 0\n# Loop and add each number\n"},
+  {id:6,title:"Find the Largest",level:"Intermediate",time:360,desc:"Given numbers=[3,7,1,9,4], find and print the largest number without using max().",starter:"# Task 6: Find the Largest\nnumbers = [3, 7, 1, 9, 4]\nlargest = numbers[0]\n# Loop and compare\n"},
+  {id:7,title:"Factorial",level:"Intermediate",time:420,desc:"Write a function to calculate factorial of 5 using recursion.",starter:"# Task 7: Factorial using recursion\ndef factorial(n):\n    # Base case\n    if n == 0:\n        return 1\n    # Recursive case\n    return n * factorial(n - 1)\n\nprint(factorial(5))\n"},
+  {id:8,title:"Reverse a String",level:"Intermediate",time:240,desc:"Reverse the string 'Ragsy' and print it without using [::-1].",starter:"# Task 8: Reverse a String\ntext = 'Ragsy'\nresult = ''\n# Loop and build reversed string\n"},
+  {id:9,title:"Count Vowels",level:"Intermediate",time:300,desc:"Count the number of vowels in 'Hello World' and print the count.",starter:"# Task 9: Count Vowels\ntext = 'Hello World'\nvowels = 'aeiouAEIOU'\ncount = 0\n# Loop through text\n"},
+  {id:10,title:"Simple Class",level:"Advanced",time:600,desc:"Create a Student class with name and marks attributes and a method to print grade.",starter:"# Task 10: Simple Class\nclass Student:\n    def __init__(self, name, marks):\n        self.name = name\n        self.marks = marks\n    \n    def get_grade(self):\n        # Return A, B, C based on marks\n        pass\n\ns = Student('Alice', 85)\nprint(s.get_grade())\n"},
+];
+
+const JS_TASKS=[
+  {id:1,title:"Hello World",level:"Beginner",time:120,desc:"Print 'Hello, World!' using console.log().",starter:"// Task 1: Hello World\n// Print Hello, World!\nconsole.log('Hello, World!');\n"},
+  {id:2,title:"Add Two Numbers",level:"Beginner",time:180,desc:"Create variables num1=10 and num2=20, add them and print the result.",starter:"// Task 2: Add Two Numbers\nlet num1 = 10;\nlet num2 = 20;\n// Add and print the result\n"},
+  {id:3,title:"Even or Odd",level:"Beginner",time:240,desc:"Check if the number 7 is even or odd and print 'Even' or 'Odd'.",starter:"// Task 3: Even or Odd\nlet num = 7;\n// Check if num is even or odd\nif (num % 2 === 0) {\n    console.log('Even');\n} else {\n    console.log('Odd');\n}\n"},
+  {id:4,title:"FizzBuzz",level:"Beginner",time:300,desc:"Print numbers 1-20. For multiples of 3 print 'Fizz', for 5 print 'Buzz', for both print 'FizzBuzz'.",starter:"// Task 4: FizzBuzz\nfor (let i = 1; i <= 20; i++) {\n    // Check conditions and print\n}\n"},
+  {id:5,title:"Sum of Array",level:"Beginner",time:240,desc:"Given numbers=[1,2,3,4,5], find and print the sum using a loop.",starter:"// Task 5: Sum of Array\nlet numbers = [1, 2, 3, 4, 5];\nlet total = 0;\n// Loop and add each number\nfor (let i = 0; i < numbers.length; i++) {\n    // add to total\n}\nconsole.log(total);\n"},
+  {id:6,title:"Find the Largest",level:"Intermediate",time:360,desc:"Given numbers=[3,7,1,9,4], find and print the largest number without using Math.max().",starter:"// Task 6: Find the Largest\nlet numbers = [3, 7, 1, 9, 4];\nlet largest = numbers[0];\n// Loop and compare\n"},
+  {id:7,title:"Reverse a String",level:"Intermediate",time:240,desc:"Reverse the string 'Ragsy' and print it without using .reverse().",starter:"// Task 7: Reverse a String\nlet text = 'Ragsy';\nlet result = '';\n// Loop and build reversed string\nfor (let i = text.length - 1; i >= 0; i--) {\n    result += text[i];\n}\nconsole.log(result);\n"},
+  {id:8,title:"Count Vowels",level:"Intermediate",time:300,desc:"Count the number of vowels in 'Hello World' and print the count.",starter:"// Task 8: Count Vowels\nlet text = 'Hello World';\nlet vowels = 'aeiouAEIOU';\nlet count = 0;\n// Loop through text\n"},
+  {id:9,title:"Simple Function",level:"Intermediate",time:420,desc:"Write a function that takes two numbers and returns the larger one. Test it with 8 and 13.",starter:"// Task 9: Simple Function\nfunction findLarger(a, b) {\n    // Return the larger of a and b\n}\nconsole.log(findLarger(8, 13));\n"},
+  {id:10,title:"Simple Object",level:"Advanced",time:600,desc:"Create a student object with name, marks and a getGrade method that returns A, B or C.",starter:"// Task 10: Simple Object\nconst student = {\n    name: 'Alice',\n    marks: 85,\n    getGrade: function() {\n        // Return A (>=80), B (>=60), C (below 60)\n    }\n};\nconsole.log(student.getGrade());\n"},
+];
+
+/* ══════════════════════════════════════════════════════════════
    EDITOR PAGE
 ══════════════════════════════════════════════════════════════ */
 function EditorPage({user,token,onBack,onSignOut,initialCode="",editorLang="python"}){
@@ -1047,6 +1076,7 @@ function EditorPage({user,token,onBack,onSignOut,initialCode="",editorLang="pyth
   const [inputValues,setInputValues]       = useState([]);
   const [showInputModal,setShowInputModal] = useState(false);
   const [showSamples,setShowSamples]       = useState(false);
+  const [showTasks,setShowTasks]           = useState(false);
   const [activitiesOpen,setActivitiesOpen] = useState(false);
   const [lang,setLang]                     = useState(editorLang||"python");
   const flowContainerRef = useRef(null);
@@ -1248,31 +1278,78 @@ function EditorPage({user,token,onBack,onSignOut,initialCode="",editorLang="pyth
           <div className="panel-hdr">
             <div className="panel-title"><div className="ptitle-dot"/>{lang==="javascript"?"JavaScript Source Code":"Python Source Code"}</div>
             <div className="panel-actions">
-              <button className="panel-btn" onClick={()=>setShowSamples(s=>!s)}>📚 Samples</button>
+              <button className="panel-btn" onClick={()=>setShowTasks(s=>!s)} style={{background:showTasks?"var(--teal)":"transparent",color:showTasks?"var(--ink)":"var(--teal)",border:"1px solid var(--teal)",fontWeight:700}}>📋 Tasks</button>
               <button className="panel-btn" onClick={()=>{setCode("");setResult(null);setConsoleOut(null);setError("");}}>Clear</button>
             </div>
           </div>
+
+          {/* TASKS PANEL — shown when Tasks button clicked */}
+          {showTasks&&(
+            <div style={{background:"var(--ink2)",borderBottom:"2px solid var(--teal)",padding:"16px 20px",maxHeight:320,overflowY:"auto"}}>
+              <div style={{fontFamily:"var(--mono)",fontSize:10,letterSpacing:".12em",textTransform:"uppercase",color:"var(--teal)",marginBottom:12}}>
+                {lang==="javascript"?"⚡ JavaScript Basics — Practice Tasks":"🐍 Python Basics — Practice Tasks"}
+              </div>
+              {(lang==="javascript"?JS_TASKS:PY_TASKS).map((task,i)=>(
+                <div key={task.id} style={{background:"var(--ink3)",border:"1px solid var(--line2)",borderRadius:10,padding:"12px 16px",marginBottom:10,cursor:"pointer",transition:"all .2s"}}
+                  onClick={()=>{setCode(task.starter);setShowTasks(false);fireToast("ok",`Task loaded: ${task.title}`);}}
+                  onMouseEnter={e=>e.currentTarget.style.borderColor="var(--teal)"}
+                  onMouseLeave={e=>e.currentTarget.style.borderColor="var(--line2)"}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                    <span style={{fontWeight:700,fontSize:13,color:"var(--white)"}}>{i+1}. {task.title}</span>
+                    <span style={{fontFamily:"var(--mono)",fontSize:9,padding:"2px 8px",borderRadius:20,
+                      background:task.level==="Beginner"?"rgba(52,211,153,.1)":task.level==="Intermediate"?"rgba(251,191,36,.1)":"rgba(248,113,113,.1)",
+                      color:task.level==="Beginner"?"#34d399":task.level==="Intermediate"?"#fbbf24":"#f87171",
+                      border:`1px solid ${task.level==="Beginner"?"rgba(52,211,153,.3)":task.level==="Intermediate"?"rgba(251,191,36,.3)":"rgba(248,113,113,.3)"}`
+                    }}>{task.level}</span>
+                  </div>
+                  <div style={{fontSize:12,color:"var(--cloud)",marginBottom:6,lineHeight:1.5}}>{task.desc}</div>
+                  <div style={{fontFamily:"var(--mono)",fontSize:10,color:"var(--fog)"}}>⏱ {Math.floor(task.time/60)} min · Click to load starter code</div>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="editor-wrap">
             <div className="line-nums" style={{overflowY:"hidden"}}>
               {lineNums.map(n=><div key={n} className="line-num">{n}</div>)}
             </div>
             <textarea ref={taRef} className="code-ta" value={code}
               onChange={e=>setCode(e.target.value)} onScroll={syncScroll}
-              placeholder={"# Paste your Python code here…\n# Or click 📚 Samples to pick an example\n# Supports: basic programs, OOP, recursion, exceptions, loops and more"}
+              placeholder={lang==="javascript"
+                ?"// Write your JavaScript code here…\n// Example: console.log('Hello World')\n// Supports: variables, loops, functions, arrays, objects, if/else"
+                :"# Write your Python code here…\n# Example: print('Hello World')\n# Supports: variables, loops, functions, classes, recursion, exceptions"}
               spellCheck={false}/>
           </div>
           <div className="run-bar">
             <div className="run-info">Language: <span>{lang==="javascript"?"JavaScript":"Python"}</span> · {lang==="javascript"?"Node.js runtime":"AST-powered"}</div>
-            <div style={{display:"flex",gap:8}}>
+            <div style={{display:"flex",gap:12,alignItems:"center"}}>
               <button
-                style={{display:"flex",alignItems:"center",gap:7,background:"transparent",color:runBtnDisabled?"var(--fog)":"var(--teal)",border:"1px solid var(--teal)",borderRadius:7,fontSize:13,fontWeight:600,padding:"9px 16px",cursor:"pointer",opacity:runBtnDisabled?.6:1,transition:"all .2s"}}
+                style={{display:"flex",alignItems:"center",gap:8,
+                  background:runBtnDisabled?"transparent":"rgba(0,200,168,.12)",
+                  color:runBtnDisabled?"var(--fog)":"var(--teal)",
+                  border:"2px solid "+(runBtnDisabled?"var(--line)":"var(--teal)"),
+                  borderRadius:12,fontSize:15,fontWeight:700,
+                  padding:"13px 28px",cursor:runBtnDisabled?"not-allowed":"pointer",
+                  opacity:runBtnDisabled?.5:1,transition:"all .2s",
+                  minWidth:150,justifyContent:"center",letterSpacing:".03em"}}
                 onClick={handleRun} disabled={runBtnDisabled}>
-                {scanningInputs?<><div className="loader" style={{width:13,height:13}}/> Scanning…</>
-                :loadingRun?<><div className="loader" style={{width:13,height:13}}/> Running…</>
-                :<>▶ Run Code</>}
+                {scanningInputs?<><div className="loader" style={{width:15,height:15}}/>&nbsp;Scanning…</>
+                :loadingRun?<><div className="loader" style={{width:15,height:15}}/>&nbsp;Running…</>
+                :<><span style={{fontSize:18}}>▶</span>&nbsp;Run Code</>}
               </button>
-              <button className="btn-run" onClick={handleGenerate} disabled={loadingDiagram||loadingRun||scanningInputs}>
-                {loadingDiagram?<><div className="loader" style={{width:13,height:13}}/> Generating…</>:<><IconPlay/> Generate Flowchart</>}
+              <button
+                style={{display:"flex",alignItems:"center",gap:8,
+                  background:(loadingDiagram||loadingRun||scanningInputs)?"var(--ink2)":"var(--teal)",
+                  color:(loadingDiagram||loadingRun||scanningInputs)?"var(--fog)":"var(--ink)",
+                  border:"2px solid "+(loadingDiagram||loadingRun||scanningInputs)?"var(--line)":"var(--teal)",
+                  borderRadius:12,fontSize:15,fontWeight:800,
+                  padding:"13px 28px",cursor:(loadingDiagram||loadingRun||scanningInputs)?"not-allowed":"pointer",
+                  opacity:(loadingDiagram||loadingRun||scanningInputs)?.6:1,transition:"all .2s",
+                  minWidth:200,justifyContent:"center",letterSpacing:".03em",
+                  boxShadow:(loadingDiagram||loadingRun||scanningInputs)?"none":"0 4px 18px var(--teal-glow)"}}
+                onClick={handleGenerate} disabled={loadingDiagram||loadingRun||scanningInputs}>
+                {loadingDiagram
+                  ?<><div className="loader" style={{width:15,height:15}}/>&nbsp;Generating…</>
+                  :<><span style={{fontSize:18}}>⬡</span>&nbsp;Generate Flowchart</>}
               </button>
             </div>
           </div>
@@ -1414,8 +1491,21 @@ function AdminPage({token,user,onSignOut}){
           <div>
             {loading&&<div className="out-loading" style={{height:200}}><div className="loader"/></div>}
             {stats&&(<div className="stat-cards">
-              {[{num:stats.total_users,label:"Total Users"},{num:stats.total_submissions,label:"Code Submissions"},{num:stats.total_flowcharts,label:"Flowcharts Generated"},{num:stats.new_users_this_week,label:"New Users This Week"}].map(s=>(
-                <div key={s.label} className="stat-card"><div className="stat-num">{s.num}</div><div className="stat-lbl">{s.label}</div></div>
+              {[
+                {num:stats.total_users,          label:"Total Users",            icon:"👥"},
+                {num:stats.total_submissions,    label:"Code Submissions",       icon:"💾"},
+                {num:stats.total_flowcharts,     label:"Flowcharts Generated",   icon:"⬡"},
+                {num:stats.total_explanations,   label:"Explanations Generated", icon:"📖"},
+                {num:stats.python_submissions,   label:"Python Submissions",     icon:"🐍"},
+                {num:stats.javascript_submissions,label:"JavaScript Submissions",icon:"⚡"},
+                {num:stats.new_users_this_week,  label:"New Users This Week",    icon:"🆕"},
+                {num:stats.total_downloads,      label:"Total Downloads",        icon:"⬇"},
+              ].map(s=>(
+                <div key={s.label} className="stat-card">
+                  <div style={{fontSize:22,marginBottom:6}}>{s.icon}</div>
+                  <div className="stat-num">{s.num}</div>
+                  <div className="stat-lbl">{s.label}</div>
+                </div>
               ))}
             </div>)}
             <div style={{background:"var(--ink2)",border:"1px solid var(--teal)",borderRadius:12,padding:"20px 24px"}}>

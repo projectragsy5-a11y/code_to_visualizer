@@ -14,19 +14,39 @@ async function getDagre() {
   if (_dagre) return _dagre;
   try { _dagre = (await import("dagre")).default; return _dagre; } catch { return null; }
 }
-const NODE_W = 220, NODE_H = 80;
 async function applyDagreLayout(nodes, edges) {
   const dagre = await getDagre();
   if (!dagre || !nodes.length) return nodes;
-  const g = new dagre.graphlib.Graph();
+  const g = new dagre.graphlib.Graph({ multigraph: true });
   g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: "TB", nodesep: 60, ranksep: 90, marginx: 40, marginy: 40 });
-  nodes.forEach(n => g.setNode(n.id, { width: NODE_W, height: NODE_H }));
-  edges.forEach(e => g.setEdge(e.source, e.target));
+  g.setGraph({
+    rankdir:  "TB",   // top-to-bottom like reference image
+    nodesep:  80,     // horizontal space between nodes on same rank
+    ranksep:  100,    // vertical space between ranks (rows)
+    marginx:  60,
+    marginy:  60,
+    acyclicer: "greedy",
+    ranker:   "tight-tree",
+  });
+  nodes.forEach(n => {
+    // Diamond nodes are wider/taller than regular nodes
+    const isDiamond = n.type === "diamond";
+    const isPara    = n.type === "parallelogram";
+    const w = isDiamond ? 260 : isPara ? 220 : 220;
+    const h = isDiamond ? 160 : isPara ? 70  : 70;
+    g.setNode(n.id, { width: w, height: h });
+  });
+  edges.forEach((e, i) => {
+    g.setEdge(e.source, e.target, {}, `e${i}`);
+  });
   dagre.layout(g);
   return nodes.map(n => {
-    const p = g.node(n.id);
-    return { ...n, position: { x: p.x - NODE_W / 2, y: p.y - NODE_H / 2 } };
+    const p   = g.node(n.id);
+    const isDiamond = n.type === "diamond";
+    const isPara    = n.type === "parallelogram";
+    const w   = isDiamond ? 260 : isPara ? 220 : 220;
+    const h   = isDiamond ? 160 : isPara ? 70  : 70;
+    return { ...n, position: { x: p.x - w / 2, y: p.y - h / 2 } };
   });
 }
 
@@ -745,28 +765,108 @@ function ParallelogramNode({data}){
 }
 const NODE_TYPES={diamond:DiamondNode,parallelogram:ParallelogramNode};
 
+/* ── Custom Straight Edge — pure vertical line, no bends ────── */
+function StraightEdge({ id, sourceX, sourceY, targetX, targetY,
+                        style={}, markerEnd, label, labelStyle,
+                        labelBgStyle, labelBgPadding, labelBgBorderRadius }){
+  // Draw straight vertical line from source to target
+  // If source and target are not aligned, route: down → horizontal → down
+  const midY = (sourceY + targetY) / 2;
+  let d;
+  if(Math.abs(sourceX - targetX) < 4){
+    // Perfectly aligned — pure straight vertical line
+    d = `M${sourceX},${sourceY} L${targetX},${targetY}`;
+  } else {
+    // Not aligned — go down to midpoint, across, then down to target
+    d = `M${sourceX},${sourceY} L${sourceX},${midY} L${targetX},${midY} L${targetX},${targetY}`;
+  }
+  const strokeColor = style.stroke || "#4a90b8";
+  const labelX = (sourceX + targetX) / 2;
+  const labelY = midY;
+  const pad = labelBgPadding || [6,4];
+  const textLen = label ? label.length * 7 + pad[0]*2 : 0;
+  const textH   = label ? 18 + pad[1]*2 : 0;
+  return(
+    <g>
+      <path id={id} d={d} fill="none"
+        stroke={strokeColor} strokeWidth={style.strokeWidth||2.5}
+        markerEnd={markerEnd}
+        style={{...style}}/>
+      {label&&(
+        <g transform={`translate(${labelX},${labelY})`}>
+          <rect x={-textLen/2} y={-textH/2}
+            width={textLen} height={textH}
+            rx={labelBgBorderRadius||4}
+            fill={labelBgStyle?.fill||"#111418"}
+            fillOpacity={labelBgStyle?.fillOpacity||0.95}
+            stroke={strokeColor} strokeWidth={0.8}/>
+          <text x={0} y={1} textAnchor="middle" dominantBaseline="middle"
+            style={{
+              fill: labelStyle?.fill || strokeColor,
+              fontSize: labelStyle?.fontSize||12,
+              fontWeight: labelStyle?.fontWeight||700,
+              fontFamily: labelStyle?.fontFamily||"monospace",
+            }}>{label}</text>
+        </g>
+      )}
+    </g>
+  );
+}
+
+/* ── Register custom edge type ───────────────────────────────── */
+const EDGE_TYPES = { straight: StraightEdge };
+
 /* ══════════════════════════════════════════════════════════════
    FLOW DIAGRAM COMPONENT
 ══════════════════════════════════════════════════════════════ */
 function FlowDiagramInner({nodes:initN,edges:initE}){
   const [nodes,setNodes,onNC]=useNodesState(initN);
-  const [edges,,onEC]=useEdgesState(initE);
+  const [edges,setEdges,onEC]=useEdgesState(initE);
   const { fitView } = useReactFlow();
 
   useEffect(()=>{
+    const styledEdges = initE.map(e=>{
+      const isYes = e.label==="Yes" || e.label==="yes" || e.label==="True";
+      const isNo  = e.label==="No"  || e.label==="no"  || e.label==="False";
+      const color = isYes ? "#34d399" : isNo ? "#f87171" : "#4a90b8";
+      return {
+        ...e,
+        type: "straight",      // our custom pure-straight edge
+        style: { stroke: color, strokeWidth: 2.5 },
+        labelStyle: {
+          fill: color,
+          fontSize: 12, fontWeight: 700,
+          fontFamily: "'DM Mono',monospace",
+        },
+        labelBgStyle:  { fill:"#111418", fillOpacity:0.95 },
+        labelBgPadding: [8, 4],
+        labelBgBorderRadius: 4,
+        markerEnd: {
+          type: "arrowclosed",
+          color, width: 16, height: 16,
+        },
+      };
+    });
     setNodes(initN);
-    setTimeout(()=>fitView({padding:0.15,duration:400}),80);
-  },[initN]);
+    setEdges(styledEdges);
+    setTimeout(()=>fitView({padding:0.2,duration:500}),100);
+  },[initN,initE]);
 
   return(
-    <ReactFlow nodes={nodes} edges={edges} onNodesChange={onNC} onEdgesChange={onEC}
+    <ReactFlow
+      nodes={nodes} edges={edges}
+      onNodesChange={onNC} onEdgesChange={onEC}
       nodeTypes={NODE_TYPES}
-      fitView fitViewOptions={{padding:0.15}}
-      minZoom={0.05} maxZoom={2.5}
-      defaultEdgeOptions={{type:"smoothstep",animated:true}}>
-      <Background color="#1e2530" gap={20}/>
+      edgeTypes={EDGE_TYPES}
+      fitView fitViewOptions={{padding:0.2}}
+      minZoom={0.04} maxZoom={3}
+      defaultEdgeOptions={{type:"straight"}}
+      snapToGrid={true} snapGrid={[10,10]}>
+      <Background color="#1a2035" gap={24} size={1}/>
       <Controls style={{background:"var(--ink2)",border:"1px solid var(--line2)"}}/>
-      <MiniMap style={{background:"#0d0f18"}} nodeColor={n=>n.data?.color||"#3a4658"} maskColor="rgba(0,0,0,.6)"/>
+      <MiniMap style={{background:"#0d0f18"}}
+        nodeColor={n=>n.data?.color||"#3a4658"}
+        maskColor="rgba(0,0,0,.7)"/>
     </ReactFlow>
   );
 }
@@ -1095,9 +1195,10 @@ function EditorPage({user,token,onBack,onSignOut,initialCode="",editorLang="pyth
     setLoadingDiagram(true);setResult(null);setError("");setConsoleOut(null);
     setTab("diagram");
     try{
-      const data=await apiFetch(`/visualize?token=${token}`,{method:"POST",body:JSON.stringify({code,language:editorLang})});
-      const laidOutNodes=await applyDagreLayout(data.nodes,data.edges);
-      setResult({...data,nodes:laidOutNodes});
+      const data=await apiFetch(`/visualize?token=${token}`,{method:"POST",body:JSON.stringify({code,language:lang})});
+      // Apply dagre layout — pass edges so diamond nodes route correctly
+      const laidOutNodes=await applyDagreLayout(data.nodes, data.edges);
+      setResult({...data, nodes:laidOutNodes});
       fireToast("ok",`Flowchart ready — ${data.stats.node_count} nodes`);
     }catch(err){setError(err.message);fireToast("err",err.message);}
     finally{setLoadingDiagram(false);}

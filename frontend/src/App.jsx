@@ -1227,98 +1227,123 @@ function EditorPage({user,token,onBack,onSignOut,initialCode="",editorLang="pyth
     finally{setLoadingRun(false);}
   }
 
-  /* ── Download as PNG — captures the live React Flow canvas
-     including all SVG edges/arrows using html-to-image.
-     Falls back to a clean static render if RF viewport not found.
-  ──────────────────────────────────────────────────────────── */
+  /* ── Download as PNG ─────────────────────────────────────── */
   async function handleDownload(){
     if(!result)return fireToast("err","Generate a flowchart first");
     setDownloading(true);
     try{
-      // Dynamically load html-to-image from CDN
       await loadHtmlToImage();
       const { toPng } = window.htmlToImage;
+      if(!toPng){ fireToast("err","Image library not loaded"); setDownloading(false); return; }
 
-      // Target the React Flow renderer which contains nodes + SVG edges
-      const rfViewport = document.querySelector(".react-flow__viewport");
-      const rfWrapper  = document.querySelector(".react-flow");
+      // Build a static off-screen render with all nodes and connecting lines
+      const ns=[...result.nodes].sort((a,b)=>a.position.y-b.position.y);
+      const es=result.edges||[];
+      let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+      ns.forEach(n=>{
+        minX=Math.min(minX,n.position.x);
+        minY=Math.min(minY,n.position.y);
+        maxX=Math.max(maxX,n.position.x+300);
+        maxY=Math.max(maxY,n.position.y+120);
+      });
+      const PAD=80;
+      const W=Math.max(maxX-minX+PAD*2, 700);
+      const H=Math.max(maxY-minY+PAD*2+80, 500);
 
-      if(rfViewport && rfWrapper && toPng){
-        // Calculate the bounding box from node positions
-        const ns = result.nodes;
-        const minX = Math.min(...ns.map(n=>n.position.x)) - 60;
-        const minY = Math.min(...ns.map(n=>n.position.y)) - 60;
-        const maxX = Math.max(...ns.map(n=>n.position.x+240)) + 60;
-        const maxY = Math.max(...ns.map(n=>n.position.y+100)) + 60;
-        const W = Math.max(maxX-minX, 900);
-        const H = Math.max(maxY-minY, 500);
+      const wrap=document.createElement("div");
+      wrap.style.cssText=`position:fixed;left:-9999px;top:0;background:#0d1117;width:${W}px;height:${H+100}px;overflow:hidden;font-family:'Fira Code',monospace;`;
 
-        // Get current transform of the viewport
-        const style = window.getComputedStyle(rfViewport);
-        const matrix = new DOMMatrixReadOnly(style.transform);
-        const scale  = matrix.a || 1;
-        const tx     = matrix.e || 0;
-        const ty     = matrix.f || 0;
+      // Header
+      const hdr=document.createElement("div");
+      hdr.style.cssText="color:#00c8a8;font-size:15px;font-weight:700;padding:16px 24px;border-bottom:1px solid #1e293b;background:#0d1117;";
+      hdr.textContent="⬡  Ragsy — Code Architecture Flowchart";
+      wrap.appendChild(hdr);
 
-        const dataUrl = await toPng(rfWrapper, {
-          backgroundColor: "#111418",
-          width:  W,
-          height: H,
-          style:{
-            width:  W+"px",
-            height: H+"px",
-            transform: `translate(${tx - minX * scale}px, ${ty - minY * scale}px) scale(${scale})`,
-            transformOrigin: "top left",
-          },
-          pixelRatio: 2,
-        });
+      // Canvas area with SVG for arrows + div nodes
+      const canvas=document.createElement("div");
+      canvas.style.cssText=`position:relative;width:${W}px;height:${H}px;background:#0d1117;`;
 
-        const a=document.createElement("a");
-        a.href=dataUrl;
-        a.download=`ragsy-flowchart-${result.code_id||"diagram"}.png`;
-        document.body.appendChild(a);a.click();document.body.removeChild(a);
-        fireToast("ok","Flowchart with connections downloaded!");
-      } else {
-        // Fallback: static node-only render
-        await fallbackStaticDownload();
-      }
+      // Draw SVG arrows
+      const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
+      svg.setAttribute("width",W); svg.setAttribute("height",H);
+      svg.style.cssText="position:absolute;top:0;left:0;pointer-events:none;";
+      const defs=document.createElementNS("http://www.w3.org/2000/svg","defs");
+      ["#4a90b8","#34d399","#f87171"].forEach((col,i)=>{
+        const m=document.createElementNS("http://www.w3.org/2000/svg","marker");
+        m.setAttribute("id",`arr${i}`); m.setAttribute("viewBox","0 0 10 10");
+        m.setAttribute("refX","8"); m.setAttribute("refY","5");
+        m.setAttribute("markerWidth","6"); m.setAttribute("markerHeight","6");
+        m.setAttribute("orient","auto-start-reverse");
+        const p=document.createElementNS("http://www.w3.org/2000/svg","path");
+        p.setAttribute("d","M2 1L8 5L2 9"); p.setAttribute("fill","none");
+        p.setAttribute("stroke",col); p.setAttribute("stroke-width","1.5");
+        m.appendChild(p); defs.appendChild(m);
+      });
+      svg.appendChild(defs);
 
-      if(result.code_id&&token){
-        apiFetch(`/flowchart/download?token=${token}&code_id=${result.code_id}`,{method:"POST"}).catch(()=>{});
-      }
+      // Draw edges as straight lines
+      const nodeMap={};
+      ns.forEach(n=>{ nodeMap[n.id]={x:n.position.x-minX+PAD+150, y:n.position.y-minY+PAD+40}; });
+      es.forEach(e=>{
+        const src=nodeMap[e.source]; const tgt=nodeMap[e.target];
+        if(!src||!tgt) return;
+        const isYes=e.label==="Yes"||e.label==="yes";
+        const isNo=e.label==="No"||e.label==="no";
+        const col=isYes?"#34d399":isNo?"#f87171":"#4a90b8";
+        const arrIdx=isYes?1:isNo?2:0;
+        const line=document.createElementNS("http://www.w3.org/2000/svg","line");
+        line.setAttribute("x1",src.x); line.setAttribute("y1",src.y+10);
+        line.setAttribute("x2",tgt.x); line.setAttribute("y2",tgt.y-10);
+        line.setAttribute("stroke",col); line.setAttribute("stroke-width","2");
+        line.setAttribute("marker-end",`url(#arr${arrIdx})`);
+        svg.appendChild(line);
+        if(e.label){
+          const lx=(src.x+tgt.x)/2; const ly=(src.y+tgt.y)/2;
+          const rect=document.createElementNS("http://www.w3.org/2000/svg","rect");
+          rect.setAttribute("x",lx-16); rect.setAttribute("y",ly-10);
+          rect.setAttribute("width","32"); rect.setAttribute("height","18");
+          rect.setAttribute("rx","4"); rect.setAttribute("fill","#0d1117");
+          svg.appendChild(rect);
+          const txt=document.createElementNS("http://www.w3.org/2000/svg","text");
+          txt.setAttribute("x",lx); txt.setAttribute("y",ly+4);
+          txt.setAttribute("text-anchor","middle"); txt.setAttribute("fill",col);
+          txt.setAttribute("font-size","11"); txt.setAttribute("font-weight","700");
+          txt.textContent=e.label; svg.appendChild(txt);
+        }
+      });
+      canvas.appendChild(svg);
+
+      // Draw nodes
+      ns.forEach(n=>{
+        const el=document.createElement("div");
+        const x=n.position.x-minX+PAD; const y=n.position.y-minY+PAD;
+        const color=n.data?.color||n.style?.border?.match(/#[0-9a-fA-F]+/)?.[0]||"#64748b";
+        const bg=n.data?.bg||n.style?.background||"#1e293b";
+        const label=n.data?.label||"";
+        const isDiamond=n.type==="diamond";
+        const isRounded=n.type==="input"||n.type==="output";
+        const br=isRounded?"50px":isDiamond?"4px":"10px";
+        el.style.cssText=`position:absolute;left:${x}px;top:${y}px;min-width:200px;max-width:300px;padding:12px 16px;background:${bg};border:2px solid ${color};border-radius:${br};color:#fff;font-size:12px;text-align:center;word-break:break-word;line-height:1.5;font-weight:${isRounded?"700":"400"};box-shadow:0 0 16px ${color}44;`;
+        el.textContent=label; canvas.appendChild(el);
+      });
+
+      wrap.appendChild(canvas);
+      document.body.appendChild(wrap);
+
+      // Small delay to ensure rendering
+      await new Promise(r=>setTimeout(r,300));
+      const dataUrl=await toPng(wrap,{backgroundColor:"#0d1117",pixelRatio:2,cacheBust:true});
+      document.body.removeChild(wrap);
+
+      const a=document.createElement("a");
+      a.href=dataUrl;
+      a.download=`ragsy-flowchart-${Date.now()}.png`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      fireToast("ok","✅ Flowchart downloaded successfully!");
     }catch(err){
       console.error("Download error:",err);
       fireToast("err","Download failed — try again");
     }finally{setDownloading(false);}
-  }
-
-  /* ── Fallback: static rendered PNG without live RF viewport ─*/
-  async function fallbackStaticDownload(){
-    const { toPng } = window.htmlToImage;
-    const ns=[...result.nodes].sort((a,b)=>a.position.y-b.position.y);
-    let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
-    ns.forEach(n=>{minX=Math.min(minX,n.position.x);minY=Math.min(minY,n.position.y);maxX=Math.max(maxX,n.position.x+280);maxY=Math.max(maxY,n.position.y+90);});
-    const W=maxX-minX+160;const H=maxY-minY+160;
-    const wrap=document.createElement("div");
-    wrap.style.cssText=`position:fixed;left:-9999px;top:0;background:#111418;width:${W+80}px;padding:40px;font-family:'DM Mono',monospace;`;
-    const hdr=document.createElement("div");hdr.style.cssText="color:#00c8a8;font-size:16px;font-weight:700;margin-bottom:20px;";hdr.textContent="Ragsy — Code Flowchart";
-    wrap.appendChild(hdr);
-    const area=document.createElement("div");area.style.cssText=`position:relative;width:${W}px;height:${H}px;`;
-    ns.forEach(n=>{
-      const el=document.createElement("div");
-      const x=n.position.x-minX+60;const y=n.position.y-minY+60;
-      const color=n.data?.color||n.style?.border?.match(/#[0-9a-fA-F]+/)?.[0]||"#64748b";
-      const bg=n.data?.bg||n.style?.background||"#1e293b";
-      const label=n.data?.label||"";
-      el.style.cssText=`position:absolute;left:${x}px;top:${y}px;min-width:180px;max-width:260px;padding:10px 14px;background:${bg};border:2px solid ${color};border-radius:8px;color:#fff;font-size:11px;text-align:center;word-break:break-word;line-height:1.5;`;
-      el.textContent=label;area.appendChild(el);
-    });
-    wrap.appendChild(area);document.body.appendChild(wrap);
-    const dataUrl=await toPng(wrap,{backgroundColor:"#111418",pixelRatio:2});
-    document.body.removeChild(wrap);
-    const a=document.createElement("a");a.href=dataUrl;a.download=`ragsy-flowchart-${result.code_id||"diagram"}.png`;
-    document.body.appendChild(a);a.click();document.body.removeChild(a);
-    fireToast("ok","Flowchart downloaded (static)");
   }
 
   /* ── Load html-to-image from CDN ───────────────────────────*/

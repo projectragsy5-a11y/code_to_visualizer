@@ -689,52 +689,72 @@ def build_graph_from_ast(code: str):
 def parse_js_to_graph(code: str):
     _ctr[0]=0; nodes=[]; edges=[]
     lines=code.splitlines()
+    CX=400  # center x for all nodes — keeps flowchart in middle
     start_id=nid()
-    nodes.append({"id":start_id,"type":"input","data":{"label":"▶  START"},"position":{"x":300,"y":0},
-                  "style":{"background":"#0f172a","color":"#fff","border":"2px solid #38bdf8",
-                           "borderRadius":"50px","padding":"12px 28px","fontWeight":"bold","fontSize":"14px",
-                           "textAlign":"center","minWidth":"140px","boxShadow":"0 0 24px #38bdf888",
-                           "fontFamily":"'Fira Code',monospace"}})
-    prev_id=start_id; y=130
+    start_style={"background":"#0f172a","color":"#fff","border":"2px solid #38bdf8",
+                 "borderRadius":"50px","padding":"12px 36px","fontWeight":"bold","fontSize":"15px",
+                 "textAlign":"center","minWidth":"160px","boxShadow":"0 0 28px #38bdf8aa",
+                 "fontFamily":"'Fira Code',monospace"}
+    nodes.append({"id":start_id,"type":"input","data":{"label":"▶  START"},
+                  "position":{"x":CX,"y":0},"style":start_style})
+    prev_id=start_id; y=150
     for line in lines:
         stripped=line.strip()
-        if not stripped or stripped.startswith("//"): continue
-        node_id=nid(); label=stripped[:60]+("…" if len(stripped)>60 else "")
+        # skip empty lines, comments, and closing braces
+        if not stripped: continue
+        if stripped.startswith("//"): continue
+        if stripped in ["}","};","});","})",")"]: continue
+        node_id=nid()
+        # Truncate long labels cleanly
+        label=stripped[:55]+("…" if len(stripped)>55 else "")
         color="#64748b"; bg="#1e293b"; shape="default"
         if re.match(r"^(if|else if)\s*\(",stripped):
-            color="#fca5a5"; bg="#7f1d1d"; shape="diamond"; label=re.sub(r"\s*\{.*","",stripped)
-        elif stripped.startswith("else"):
+            color="#fca5a5"; bg="#7f1d1d"; shape="diamond"
+            label=re.sub(r"\s*\{.*","",stripped).strip()
+        elif re.match(r"^else\s*\{?$",stripped.strip()):
             color="#93c5fd"; bg="#1e3a5f"; shape="diamond"; label="else"
-        elif re.match(r"^(for|while)\s*\(",stripped):
-            color="#34d399"; bg="#064e3b"; shape="diamond"; label=re.sub(r"\s*\{.*","",stripped)
-        elif re.match(r"^(function|const\s+\w+\s*=\s*(async\s*)?\(|let\s+\w+\s*=\s*function)",stripped):
-            color="#a78bfa"; bg="#4c1d95"; label=re.sub(r"\{.*","",stripped).strip()
+        elif re.match(r"^for\s*\(",stripped):
+            color="#34d399"; bg="#064e3b"; shape="diamond"
+            label=re.sub(r"\s*\{.*","",stripped).strip()
+        elif re.match(r"^while\s*\(",stripped):
+            color="#34d399"; bg="#064e3b"; shape="diamond"
+            label=re.sub(r"\s*\{.*","",stripped).strip()
+        elif re.match(r"^(function\s+\w+|const\s+\w+\s*=\s*(async\s*)?\(|const\s+\w+\s*=\s*function|let\s+\w+\s*=\s*(async\s*)?function)",stripped):
+            color="#a78bfa"; bg="#4c1d95"
+            label=re.sub(r"\{.*","",stripped).strip()[:55]
         elif re.match(r"^return\s",stripped):
             color="#fb923c"; bg="#7c2d12"
-        elif re.match(r"^(console\.log|console\.error|alert)\s*\(",stripped):
+        elif re.match(r"^(console\.log|console\.warn|console\.error|alert|document\.)\s*\(",stripped):
             color="#60a5fa"; bg="#1e3a5f"; shape="parallelogram"
         elif re.match(r"^(const|let|var)\s",stripped):
             color="#38bdf8"; bg="#0c4a6e"
-        elif stripped in ["}", "};", "});"]:
-            continue
+        elif re.match(r"^(throw|try|catch)\s*",stripped):
+            color="#f87171"; bg="#450a0a"
+        node_style={"background":bg,"color":"#fff","border":f"2px solid {color}",
+                    "borderRadius":"10px","padding":"12px 20px","fontSize":"13px",
+                    "textAlign":"center","minWidth":"220px","maxWidth":"340px",
+                    "fontFamily":"'Fira Code',monospace",
+                    "boxShadow":f"0 0 16px {color}55","wordBreak":"break-word"}
         if shape=="diamond":
-            nodes.append({"id":node_id,"type":"diamond","data":{"label":label,"color":color,"bg":bg},"position":{"x":300,"y":y}})
+            nodes.append({"id":node_id,"type":"diamond",
+                          "data":{"label":label,"color":color,"bg":bg},
+                          "position":{"x":CX,"y":y}})
         elif shape=="parallelogram":
-            nodes.append({"id":node_id,"type":"parallelogram","data":{"label":label,"color":color,"bg":bg},"position":{"x":300,"y":y}})
+            nodes.append({"id":node_id,"type":"parallelogram",
+                          "data":{"label":label,"color":color,"bg":bg},
+                          "position":{"x":CX,"y":y}})
         else:
-            nodes.append({"id":node_id,"data":{"label":label},"position":{"x":300,"y":y},
-                          "style":{"background":bg,"color":"#fff","border":f"2px solid {color}",
-                                   "borderRadius":"8px","padding":"10px 16px","fontSize":"12px",
-                                   "textAlign":"center","minWidth":"180px","maxWidth":"280px",
-                                   "fontFamily":"'Fira Code',monospace","boxShadow":f"0 0 12px {color}44"}})
+            nodes.append({"id":node_id,"data":{"label":label},
+                          "position":{"x":CX,"y":y},"style":node_style})
         edges.append(make_edge(prev_id,node_id,color=color))
-        prev_id=node_id; y+=130
+        prev_id=node_id; y+=150
     end_id=nid()
-    nodes.append({"id":end_id,"type":"output","data":{"label":"■  END"},"position":{"x":300,"y":y},
-                  "style":{"background":"#0f172a","color":"#fff","border":"2px solid #f43f5e",
-                           "borderRadius":"50px","padding":"12px 28px","fontWeight":"bold","fontSize":"14px",
-                           "textAlign":"center","minWidth":"140px","boxShadow":"0 0 24px #f43f5e88",
-                           "fontFamily":"'Fira Code',monospace"}})
+    end_style={"background":"#0f172a","color":"#fff","border":"2px solid #f43f5e",
+               "borderRadius":"50px","padding":"12px 36px","fontWeight":"bold","fontSize":"15px",
+               "textAlign":"center","minWidth":"160px","boxShadow":"0 0 28px #f43f5eaa",
+               "fontFamily":"'Fira Code',monospace"}
+    nodes.append({"id":end_id,"type":"output","data":{"label":"■  END"},
+                  "position":{"x":CX,"y":y},"style":end_style})
     edges.append(make_edge(prev_id,end_id,"","#f43f5e"))
     return nodes,edges
 
@@ -742,7 +762,53 @@ def explain_code(code: str, language: str) -> list:
     parts=[]
     if language=="javascript":
         lines=[l.strip() for l in code.splitlines() if l.strip() and not l.strip().startswith("//")]
-        parts.append({"title":"📝 What this code does","body":f"This JavaScript program has {len(lines)} statements."})
+        funcs  = [l for l in lines if re.match(r"^(function|const\s+\w+\s*=.*=>|const\s+\w+\s*=\s*function)", l)]
+        loops  = [l for l in lines if re.match(r"^(for|while)\s*\(", l)]
+        conds  = [l for l in lines if re.match(r"^(if|else if)\s*\(", l)]
+        vars_  = [l for l in lines if re.match(r"^(const|let|var)\s", l)]
+        logs   = [l for l in lines if re.match(r"^console\.log\(", l)]
+        rets   = [l for l in lines if re.match(r"^return\s", l)]
+        summary_parts = []
+        if vars_:   summary_parts.append(f"{len(vars_)} variable(s)")
+        if funcs:   summary_parts.append(f"{len(funcs)} function(s)")
+        if conds:   summary_parts.append(f"{len(conds)} condition(s)")
+        if loops:   summary_parts.append(f"{len(loops)} loop(s)")
+        if logs:    summary_parts.append(f"{len(logs)} console.log call(s)")
+        summary = ", ".join(summary_parts) if summary_parts else "basic statements"
+        parts.append({"title":"📝 What this code does","body":f"This JavaScript program contains {summary}."})
+        steps = []; sn = 1
+        for l in lines:
+            if re.match(r"^(const|let|var)\s", l):
+                parts_split = l.split("=", 1)
+                vname = parts_split[0].replace("const","").replace("let","").replace("var","").strip()
+                val = parts_split[1].strip().rstrip(";") if len(parts_split)>1 else ""
+                steps.append(f"Step {sn}: Creates a variable \"{vname}\" with value {val}."); sn+=1
+            elif re.match(r"^function\s", l):
+                fname = re.sub(r"function\s+(\w+).*", r"\1", l)
+                steps.append(f"Step {sn}: Defines a function called \"{fname}\"."); sn+=1
+            elif re.match(r"^(if|else if)\s*\(", l):
+                cond = re.sub(r"^(else )?if\s*\((.*)\).*", r"\2", l)
+                steps.append(f"Step {sn}: Checks condition: {cond}."); sn+=1
+            elif l.startswith("else"):
+                steps.append(f"Step {sn}: Otherwise (else branch) executes."); sn+=1
+            elif re.match(r"^for\s*\(", l):
+                steps.append(f"Step {sn}: Loops through: {l[:50]}."); sn+=1
+            elif re.match(r"^while\s*\(", l):
+                steps.append(f"Step {sn}: Repeats while condition is true."); sn+=1
+            elif re.match(r"^console\.log\(", l):
+                val = re.sub(r"^console\.log\((.*)\).*", r"\1", l)
+                steps.append(f"Step {sn}: Prints {val} to the console."); sn+=1
+            elif re.match(r"^return\s", l):
+                val = l.replace("return","").strip().rstrip(";")
+                steps.append(f"Step {sn}: Returns {val}."); sn+=1
+        if steps: parts.append({"title":"📋 How it works step by step","body":"\n".join(steps)})
+        concepts = []
+        if funcs:  concepts.append("Functions (reusable blocks of code)")
+        if loops:  concepts.append("Loops (repeating tasks)")
+        if conds:  concepts.append("Conditionals (if/else decisions)")
+        if vars_:  concepts.append("Variables (storing data)")
+        if rets:   concepts.append("Return values")
+        if concepts: parts.append({"title":"💡 Key concepts used","body":"\n".join(f"• {c}" for c in concepts)})
         return parts
     try: tree=ast.parse(code)
     except: return [{"title":"⚠️ Parse Error","body":"Could not analyse this code."}]

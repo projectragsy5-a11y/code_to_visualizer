@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: ragsy-backend
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: CODE_ENCRYPTION_KEY
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: TWOFACTOR_API_KEY
+        sync: false
+      - key: FAST2SMS_API_KEY
+        sync: false

@@ -1,4 +1,4 @@
-"""Ragsy Backend v4 — SQL Server DB, Forgot Password, Admin Dashboard, JS execution, Code Encryption"""
+"""Ragsy Backend v5 — PostgreSQL (Supabase), Full Deployment Ready"""
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -6,18 +6,16 @@ from typing import List
 import ast, random, string, sys, io, traceback, re, hashlib, json
 from datetime import datetime, timedelta
 import os, requests as http_requests
-import pyodbc
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import subprocess, tempfile
 
-# ── Encryption (Fernet AES — reversible so users can retrieve their code) ──
 try:
     from cryptography.fernet import Fernet
     _FERNET_AVAILABLE = True
 except ImportError:
     _FERNET_AVAILABLE = False
-    print("[WARN] cryptography not installed — run: pip install cryptography")
 
-# ── Load .env if present ──────────────────────────────────────────
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -25,47 +23,29 @@ except ImportError:
     pass
 
 # ══════════════════════════════════════════════════════════════════
-# SQL SERVER CONNECTION
-# Change DB_SERVER to your exact server name shown in SSMS login
+# DATABASE — PostgreSQL via Supabase
 # ══════════════════════════════════════════════════════════════════
-DB_SERVER = os.getenv("DB_SERVER", r"RANJAN\RANJANBABU")   # <-- edit this
-DB_NAME   = os.getenv("DB_NAME",   "code_architecture_visualizer")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 def get_db():
-    """
-    Opens a pyodbc connection using Windows Authentication.
-    No username/password needed — uses your Windows login.
-    """
-    conn_str = (
-        f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-        f"SERVER={DB_SERVER};"
-        f"DATABASE={DB_NAME};"
-        f"Trusted_Connection=yes;"
-    )
-    return pyodbc.connect(conn_str)
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
 def test_db_connection():
-    """Runs at startup. Prints success or failure message."""
     try:
         conn = get_db()
         cur  = conn.cursor()
-        cur.execute("SELECT @@VERSION")
-        ver  = cur.fetchone()[0].split("\n")[0]
+        cur.execute("SELECT version()")
+        ver  = cur.fetchone()["version"].split(",")[0]
         conn.close()
         print(f"[DB OK ] Connected → {ver}")
         return True
     except Exception as e:
-        print(f"[DB ERR] Connection FAILED: {e}")
-        print(f"         Server : {DB_SERVER}")
-        print(f"         DB     : {DB_NAME}")
-        print(f"         Fix    : Check server name matches SSMS login window")
+        print(f"[DB ERR] {e}")
         return False
 
 def hash_pw(pw: str) -> str:
-    """SHA-256 — never store plain text passwords in DB."""
     return hashlib.sha256(pw.encode()).hexdigest()
 
-# ── Code encryption helpers ───────────────────────────────────────
 ENCRYPTION_KEY = os.getenv("CODE_ENCRYPTION_KEY", "")
 
 def get_fernet():
@@ -78,35 +58,30 @@ def get_fernet():
 
 def encrypt_code(code: str) -> str:
     f = get_fernet()
-    if not f:
-        return code
-    return f.encrypt(code.encode()).decode()
+    return f.encrypt(code.encode()).decode() if f else code
 
 def decrypt_code(encrypted: str) -> str:
     f = get_fernet()
-    if not f:
-        return encrypted
+    if not f: return encrypted
     try:
         return f.decrypt(encrypted.encode()).decode()
     except Exception:
-        return encrypted  # fallback for already-plain records
+        return encrypted
 
 # ══════════════════════════════════════════════════════════════════
-# DB HELPER FUNCTIONS — one per table, matching your ERD schema
+# DB HELPERS — pure PostgreSQL syntax (%s placeholders, RETURNING)
 # ══════════════════════════════════════════════════════════════════
 
-# ── USERS table ───────────────────────────────────────────────────
 def db_user_create(username, mobile_no, pw_hash) -> int:
-    """INSERT user. Returns new user_id from DB."""
     conn = get_db()
     try:
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO USERS (username, mobile_no, password, created_at) "
-            "OUTPUT INSERTED.user_id VALUES (?,?,?,?)",
-            username, mobile_no, pw_hash, datetime.utcnow()
+            "INSERT INTO users (username, mobile_no, password, created_at) "
+            "VALUES (%s,%s,%s,%s) RETURNING user_id",
+            (username, mobile_no, pw_hash, datetime.utcnow())
         )
-        uid = cur.fetchone()[0]
+        uid = cur.fetchone()["user_id"]
         conn.commit()
         return uid
     finally:
@@ -118,11 +93,10 @@ def db_user_by_mobile(mobile_no) -> dict | None:
         cur = conn.cursor()
         cur.execute(
             "SELECT user_id,username,mobile_no,password,created_at,is_admin "
-            "FROM USERS WHERE mobile_no=?", mobile_no)
+            "FROM users WHERE mobile_no=%s", (mobile_no,))
         r = cur.fetchone()
         if not r: return None
-        return {"user_id":r[0],"username":r[1],"mobile_no":r[2],
-                "password":r[3],"created_at":str(r[4]),"is_admin":bool(r[5]) if r[5] is not None else False}
+        return dict(r)
     finally:
         conn.close()
 
@@ -132,11 +106,10 @@ def db_user_by_username(username) -> dict | None:
         cur = conn.cursor()
         cur.execute(
             "SELECT user_id,username,mobile_no,password,is_admin "
-            "FROM USERS WHERE username=?", username)
+            "FROM users WHERE username=%s", (username,))
         r = cur.fetchone()
         if not r: return None
-        return {"user_id":r[0],"username":r[1],"mobile_no":r[2],"password":r[3],
-                "is_admin":bool(r[4]) if r[4] is not None else False}
+        return dict(r)
     finally:
         conn.close()
 
@@ -144,25 +117,21 @@ def db_user_by_id(uid) -> dict | None:
     conn = get_db()
     try:
         cur = conn.cursor()
-        cur.execute("SELECT user_id,username,mobile_no,is_admin FROM USERS WHERE user_id=?", uid)
+        cur.execute("SELECT user_id,username,mobile_no,is_admin FROM users WHERE user_id=%s", (uid,))
         r = cur.fetchone()
         if not r: return None
-        return {"user_id":r[0],"username":r[1],"mobile_no":r[2],
-                "is_admin":bool(r[3]) if r[3] is not None else False}
+        return dict(r)
     finally:
         conn.close()
 
-# ── OTP_VERIFICATION table ────────────────────────────────────────
 def db_otp_upsert(user_id, otp_code, expiry_time):
-    """Delete existing OTP for user, then insert fresh one."""
     conn = get_db()
     try:
         cur = conn.cursor()
-        cur.execute("DELETE FROM OTP_VERIFICATION WHERE user_id=?", user_id)
+        cur.execute("DELETE FROM otp_verification WHERE user_id=%s", (user_id,))
         cur.execute(
-            "INSERT INTO OTP_VERIFICATION (user_id,otp_code,expiry_time,status) "
-            "VALUES (?,?,?,'pending')",
-            user_id, otp_code, expiry_time
+            "INSERT INTO otp_verification (user_id,otp_code,expiry_time,status) VALUES (%s,%s,%s,'pending')",
+            (user_id, otp_code, expiry_time)
         )
         conn.commit()
     finally:
@@ -173,12 +142,11 @@ def db_otp_get(user_id) -> dict | None:
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT otp_id,user_id,otp_code,expiry_time,status "
-            "FROM OTP_VERIFICATION WHERE user_id=?", user_id)
+            "SELECT otp_id,user_id,otp_code,expiry_time,status FROM otp_verification WHERE user_id=%s",
+            (user_id,))
         r = cur.fetchone()
         if not r: return None
-        return {"otp_id":r[0],"user_id":r[1],"otp_code":r[2],
-                "expiry_time":r[3],"status":r[4]}
+        return dict(r)
     finally:
         conn.close()
 
@@ -186,23 +154,21 @@ def db_otp_set_status(user_id, status):
     conn = get_db()
     try:
         cur = conn.cursor()
-        cur.execute("UPDATE OTP_VERIFICATION SET status=? WHERE user_id=?", status, user_id)
+        cur.execute("UPDATE otp_verification SET status=%s WHERE user_id=%s", (status, user_id))
         conn.commit()
     finally:
         conn.close()
 
-# ── CODE_SUBMISSIONS table ────────────────────────────────────────
 def db_submission_save(user_id, source_code, language) -> int:
-    """INSERT submission with encrypted source code. Returns new code_id from DB."""
     conn = get_db()
     try:
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO CODE_SUBMISSIONS (user_id,source_code,language,upload_time) "
-            "OUTPUT INSERTED.code_id VALUES (?,?,?,?)",
-            user_id, encrypt_code(source_code), language, datetime.utcnow()
+            "INSERT INTO code_submissions (user_id,source_code,language,upload_time) "
+            "VALUES (%s,%s,%s,%s) RETURNING code_id",
+            (user_id, encrypt_code(source_code), language, datetime.utcnow())
         )
-        cid = cur.fetchone()[0]
+        cid = cur.fetchone()["code_id"]
         conn.commit()
         return cid
     finally:
@@ -213,90 +179,79 @@ def db_submissions_by_user(user_id) -> list:
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT code_id,source_code,language,upload_time FROM CODE_SUBMISSIONS "
-            "WHERE user_id=? ORDER BY upload_time DESC", user_id)
+            "SELECT code_id,source_code,language,upload_time FROM code_submissions "
+            "WHERE user_id=%s ORDER BY upload_time DESC", (user_id,))
         rows = cur.fetchall()
         result = []
         for r in rows:
-            full = decrypt_code(r[1])
+            full = decrypt_code(r["source_code"])
             result.append({
-                "code_id": r[0],
+                "code_id": r["code_id"],
                 "source_code_full": full,
                 "source_code": full[:120] + ("..." if len(full) > 120 else ""),
-                "language": r[2],
-                "upload_time": str(r[3])
+                "language": r["language"],
+                "upload_time": str(r["upload_time"])
             })
         return result
     finally:
         conn.close()
 
-# ── FLOWCHARTS table ──────────────────────────────────────────────
 def db_flowchart_save(code_id, diagram_json: str):
     conn = get_db()
     try:
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO FLOWCHARTS (code_id,diagram_path,generated_time) VALUES (?,?,?)",
-            code_id, diagram_json, datetime.utcnow()
+            "INSERT INTO flowcharts (code_id,diagram_path,generated_time) VALUES (%s,%s,%s)",
+            (code_id, diagram_json, datetime.utcnow())
         )
         conn.commit()
     finally:
         conn.close()
 
-# ── EXPLANATIONS table ────────────────────────────────────────────
 def db_explanation_save(code_id, explanation_text: str):
     conn = get_db()
     try:
         cur = conn.cursor()
-        # Try update first, then insert if not exists
-        cur.execute("SELECT explanation_id FROM EXPLANATIONS WHERE code_id=?", code_id)
+        cur.execute("SELECT explanation_id FROM explanations WHERE code_id=%s", (code_id,))
         if cur.fetchone():
-            cur.execute("UPDATE EXPLANATIONS SET file_path=? WHERE code_id=?", explanation_text, code_id)
+            cur.execute("UPDATE explanations SET file_path=%s WHERE code_id=%s", (explanation_text, code_id))
         else:
             cur.execute(
-                "INSERT INTO EXPLANATIONS (code_id,file_path,download_count) VALUES (?,?,0)",
-                code_id, explanation_text
+                "INSERT INTO explanations (code_id,file_path,download_count) VALUES (%s,%s,0)",
+                (code_id, explanation_text)
             )
         conn.commit()
     finally:
         conn.close()
 
-# ── USER_ACTIONS_LOG table ────────────────────────────────────────
 def db_action_log(user_id):
     conn = get_db()
     try:
         cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO USER_ACTIONS_LOG (user_id,action_time) VALUES (?,?)",
-            user_id, datetime.utcnow()
-        )
+        cur.execute("INSERT INTO user_actions_log (user_id,action_time) VALUES (%s,%s)", (user_id, datetime.utcnow()))
         conn.commit()
     finally:
         conn.close()
 
-# ── REPORTS table ─────────────────────────────────────────────────
 def db_report_save(user_id, action_type):
     conn = get_db()
     try:
         cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO REPORTS (user_id,action_type,action_time) VALUES (?,?,?)",
-            user_id, action_type, datetime.utcnow()
-        )
+        cur.execute("INSERT INTO reports (user_id,action_type,action_time) VALUES (%s,%s,%s)",
+                    (user_id, action_type, datetime.utcnow()))
         conn.commit()
     finally:
         conn.close()
 
 def db_log(user_id, action_type):
-    """Write to USER_ACTIONS_LOG + REPORTS. Never crashes the API."""
     try:
         db_action_log(user_id)
         db_report_save(user_id, action_type)
     except Exception as e:
         print(f"[DB LOG WARNING] {e}")
 
-# ── Session store (in-memory, with 24-hour expiry) ────────────────
-sessions_db = {}   # token -> {"user_id": int, "expires": datetime}
+# ── Session store ─────────────────────────────────────────────────
+sessions_db = {}
 
 def gen_token(user_id: int) -> str:
     t = "".join(random.choices(string.ascii_letters + string.digits, k=32))
@@ -316,85 +271,59 @@ def user_by_token(token: str) -> dict:
     return user
 
 # ══════════════════════════════════════════════════════════════════
-# FastAPI app
+# FastAPI app + CORS
 # ══════════════════════════════════════════════════════════════════
-app = FastAPI(title="Ragsy API", version="4.0.0")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "")
+
+app = FastAPI(title="Ragsy API", version="5.0.0")
 app.add_middleware(CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000","http://127.0.0.1:3000",
-        "http://localhost:5173","http://127.0.0.1:5173",
+        "http://localhost:3000", "http://127.0.0.1:3000",
+        "http://localhost:5173", "http://127.0.0.1:5173",
+        FRONTEND_URL,
     ],
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 # ── SMS ───────────────────────────────────────────────────────────
-# Provider keys — set in .env file
-TWOFACTOR_KEY = os.getenv("TWOFACTOR_API_KEY", "")   # 2Factor.in  (free Indian OTP)
-FAST2SMS_KEY  = os.getenv("FAST2SMS_API_KEY",  "")   # Fast2SMS    (free Indian OTP)
+TWOFACTOR_KEY = os.getenv("TWOFACTOR_API_KEY", "")
+FAST2SMS_KEY  = os.getenv("FAST2SMS_API_KEY",  "")
 TWILIO_SID    = os.getenv("TWILIO_ACCOUNT_SID",  "")
 TWILIO_TOKEN  = os.getenv("TWILIO_AUTH_TOKEN",   "")
 TWILIO_FROM   = os.getenv("TWILIO_FROM_NUMBER",  "")
 
 def send_sms(to_number: str, otp: str) -> dict:
-    """Try SMS providers in order: 2Factor → Fast2SMS → Twilio → dev console."""
     digits   = re.sub(r"[^0-9]", "", to_number)
     indian10 = digits[-10:] if len(digits) >= 10 else digits
-    message  = f"Your Ragsy OTP is {otp}. Valid for 5 minutes. Do not share with anyone."
-
-    # ── Provider 1: 2Factor.in (best free Indian SMS OTP) ─────────
-    # Sign up free at https://2factor.in — get your API key from dashboard
-    # Free plan: 10 OTP SMS/day, no credit card needed
+    message  = f"Your Ragsy OTP is {otp}. Valid for 5 minutes. Do not share."
     if TWOFACTOR_KEY:
         try:
-            r = http_requests.get(
-                f"https://2factor.in/API/V1/{TWOFACTOR_KEY}/SMS/{indian10}/{otp}/Ragsy",
-                timeout=10
-            )
+            r = http_requests.get(f"https://2factor.in/API/V1/{TWOFACTOR_KEY}/SMS/{indian10}/{otp}/Ragsy", timeout=10)
             d = r.json()
             if d.get("Status") == "Success":
-                print(f"[SMS OK 2Factor] -> {indian10}")
                 return {"sent": True, "provider": "2factor", "error": None}
-            print(f"[SMS FAIL 2Factor] {d}")
-            return {"sent": False, "provider": "2factor", "error": str(d.get("Details", d))}
         except Exception as e:
             print(f"[SMS ERR 2Factor] {e}")
-
-    # ── Provider 2: Fast2SMS ───────────────────────────────────────
-    # Sign up free at https://fast2sms.com — get API key from dashboard
-    # Free plan: 50 SMS credits on signup
     if FAST2SMS_KEY:
         try:
-            r = http_requests.post(
-                "https://www.fast2sms.com/dev/bulkV2",
+            r = http_requests.post("https://www.fast2sms.com/dev/bulkV2",
                 headers={"authorization": FAST2SMS_KEY},
-                json={"route": "otp", "variables_values": otp, "flash": 0, "numbers": indian10},
-                timeout=10
-            )
+                json={"route":"otp","variables_values":otp,"flash":0,"numbers":indian10}, timeout=10)
             d = r.json()
             if d.get("return") == True:
-                print(f"[SMS OK Fast2SMS] -> {indian10}")
                 return {"sent": True, "provider": "fast2sms", "error": None}
-            print(f"[SMS FAIL Fast2SMS] {d}")
-            return {"sent": False, "provider": "fast2sms", "error": str(d.get("message", d))}
         except Exception as e:
             print(f"[SMS ERR Fast2SMS] {e}")
-
-    # ── Provider 3: Twilio ─────────────────────────────────────────
     if TWILIO_SID and TWILIO_TOKEN and TWILIO_FROM:
         try:
             from twilio.rest import Client
-            Client(TWILIO_SID, TWILIO_TOKEN).messages.create(
-                body=message, from_=TWILIO_FROM, to=to_number)
-            print(f"[SMS OK Twilio] -> {to_number}")
+            Client(TWILIO_SID, TWILIO_TOKEN).messages.create(body=message, from_=TWILIO_FROM, to=to_number)
             return {"sent": True, "provider": "twilio", "error": None}
         except Exception as e:
-            print(f"[SMS ERR Twilio] {e}")
             return {"sent": False, "provider": "twilio", "error": str(e)}
-
-    # ── No provider configured — show OTP in response (dev mode) ──
-    print(f"[DEV OTP] {to_number} => {otp}  (set TWOFACTOR_API_KEY in .env to send real SMS)")
+    print(f"[DEV OTP] {to_number} => {otp}")
     return {"sent": False, "provider": "console", "error": "No SMS provider configured"}
 
-# ── Pydantic Models ───────────────────────────────────────────────
+# ── Models ────────────────────────────────────────────────────────
 class RegisterRequest(BaseModel):
     username: str; mobile_no: str; password: str
 class OTPVerifyRequest(BaseModel):
@@ -408,9 +337,7 @@ class LogoutRequest(BaseModel):
 class CodeRequest(BaseModel):
     code: str; language: str = "python"
 class RunRequest(BaseModel):
-    code: str
-    language: str = "python"
-    user_inputs: List[str] = []
+    code: str; language: str = "python"; user_inputs: List[str] = []
 class ForgotPasswordRequest(BaseModel):
     mobile_no: str
 class ResetPasswordRequest(BaseModel):
@@ -419,10 +346,10 @@ class ResetPasswordRequest(BaseModel):
 def gen_otp(): return "".join(random.choices(string.digits, k=6))
 
 # ══════════════════════════════════════════════════════════════════
-# AUTH ROUTES — reading/writing real SQL Server DB
+# AUTH ROUTES
 # ══════════════════════════════════════════════════════════════════
 @app.get("/")
-def root(): return {"status":"running","app":"Ragsy","version":"3.1.0"}
+def root(): return {"status":"running","app":"Ragsy","version":"5.0.0"}
 
 @app.get("/health")
 def health():
@@ -440,172 +367,126 @@ def register(data: RegisterRequest):
     uid = db_user_create(data.username, data.mobile_no, hash_pw(data.password))
     token = gen_token(uid)
     db_log(uid, "register")
-    return {
-        "message": "Welcome to Ragsy! Your account is ready.",
-        "token": token,
-        "user": {"username": data.username, "mobile_no": data.mobile_no},
-    }
+    return {"message":"Welcome to Ragsy!","token":token,
+            "user":{"username":data.username,"mobile_no":data.mobile_no}}
 
 @app.post("/auth/verify-otp")
 def verify_otp(data: OTPVerifyRequest):
     user = db_user_by_mobile(data.mobile_no)
-    if not user:
-        raise HTTPException(404, detail="Mobile not found. Please register first.")
+    if not user: raise HTTPException(404, detail="Mobile not found. Please register first.")
     rec = db_otp_get(user["user_id"])
-    if not rec:
-        raise HTTPException(400, detail="No OTP found. Please register again.")
-    if rec["status"] == "verified":
-        raise HTTPException(400, detail="OTP already used.")
+    if not rec: raise HTTPException(400, detail="No OTP found. Please register again.")
+    if rec["status"] == "verified": raise HTTPException(400, detail="OTP already used.")
     if datetime.utcnow() > rec["expiry_time"]:
         db_otp_set_status(user["user_id"], "expired")
         raise HTTPException(400, detail="OTP expired. Request a new one.")
-    if rec["otp_code"] != data.otp_code:
-        raise HTTPException(400, detail="Incorrect OTP. Please try again.")
-
+    if rec["otp_code"] != data.otp_code: raise HTTPException(400, detail="Incorrect OTP.")
     db_otp_set_status(user["user_id"], "verified")
     token = gen_token(user["user_id"])
     db_log(user["user_id"], "otp_verify")
-    return {
-        "message": "Mobile verified successfully.",
-        "token":   token,
-        "user":    {"username": user["username"], "mobile_no": user["mobile_no"]},
-    }
+    return {"message":"Mobile verified.","token":token,
+            "user":{"username":user["username"],"mobile_no":user["mobile_no"]}}
 
 @app.post("/auth/resend-otp")
 def resend_otp(data: ResendOTPRequest):
     user = db_user_by_mobile(data.mobile_no)
-    if not user:
-        raise HTTPException(404, detail="Mobile not found. Please register first.")
+    if not user: raise HTTPException(404, detail="Mobile not found.")
     otp    = gen_otp()
     expiry = datetime.utcnow() + timedelta(minutes=5)
     db_otp_upsert(user["user_id"], otp, expiry)
     sms = send_sms(data.mobile_no, otp)
-    return {
-        "message":  "New OTP sent.",
-        "sms_sent": sms["sent"],
-        "provider": sms["provider"],
-        "otp_code": otp if not sms["sent"] else None,
-        "expires_in": 300,
-    }
+    return {"message":"New OTP sent.","sms_sent":sms["sent"],"provider":sms["provider"],
+            "otp_code":otp if not sms["sent"] else None,"expires_in":300}
 
 @app.post("/auth/login")
 def login(data: LoginRequest):
     user = db_user_by_username(data.username)
-    if not user:
-        raise HTTPException(401, detail="Username not found")
-    if user["password"] != hash_pw(data.password):
-        raise HTTPException(401, detail="Incorrect password")
+    if not user: raise HTTPException(401, detail="Username not found")
+    if user["password"] != hash_pw(data.password): raise HTTPException(401, detail="Incorrect password")
     token = gen_token(user["user_id"])
     db_log(user["user_id"], "login")
-    return {
-        "message": "Login successful",
-        "token":   token,
-        "user":    {"username": user["username"], "mobile_no": user["mobile_no"],
-                    "is_admin": user.get("is_admin", False)},
-    }
+    return {"message":"Login successful","token":token,
+            "user":{"username":user["username"],"mobile_no":user["mobile_no"],
+                    "is_admin":bool(user.get("is_admin", False))}}
 
 @app.post("/auth/logout")
 def logout(data: LogoutRequest):
     rec = sessions_db.pop(data.token, None)
-    if rec:
-        db_log(rec["user_id"], "logout")
-    return {"message": "Logged out successfully"}
+    if rec: db_log(rec["user_id"], "logout")
+    return {"message":"Logged out successfully"}
 
 @app.get("/auth/me")
 def get_me(token: str):
     user = user_by_token(token)
-    return {"user_id": user["user_id"], "username": user["username"],
-            "mobile_no": user["mobile_no"], "is_admin": user.get("is_admin", False)}
+    return {"user_id":user["user_id"],"username":user["username"],
+            "mobile_no":user["mobile_no"],"is_admin":bool(user.get("is_admin", False))}
 
-# ── Forgot Password ───────────────────────────────────────────────
 @app.post("/auth/forgot-password")
 def forgot_password(data: ForgotPasswordRequest):
     user = db_user_by_mobile(data.mobile_no)
-    if not user:
-        raise HTTPException(404, detail="No account found with this mobile number")
+    if not user: raise HTTPException(404, detail="No account found with this mobile number")
     otp    = gen_otp()
     expiry = datetime.utcnow() + timedelta(minutes=5)
     db_otp_upsert(user["user_id"], otp, expiry)
     sms = send_sms(data.mobile_no, otp)
-    return {
-        "message":   "OTP sent to your mobile number",
-        "sms_sent":  sms["sent"],
-        "provider":  sms["provider"],
-        "otp_code":  otp if not sms["sent"] else None,   # only shown when no SMS provider is set (dev mode)
-        "expires_in": 300,
-    }
+    return {"message":"OTP sent","sms_sent":sms["sent"],"provider":sms["provider"],
+            "otp_code":otp if not sms["sent"] else None,"expires_in":300}
 
 @app.post("/auth/reset-password")
 def reset_password(data: ResetPasswordRequest):
     user = db_user_by_mobile(data.mobile_no)
-    if not user:
-        raise HTTPException(404, detail="Mobile not found")
-    if len(data.new_password) < 6:
-        raise HTTPException(400, detail="Password must be at least 6 characters")
+    if not user: raise HTTPException(404, detail="Mobile not found")
+    if len(data.new_password) < 6: raise HTTPException(400, detail="Password must be at least 6 characters")
     rec = db_otp_get(user["user_id"])
-    if not rec:
-        raise HTTPException(400, detail="No OTP found. Please request a new one.")
+    if not rec: raise HTTPException(400, detail="No OTP found.")
     if datetime.utcnow() > rec["expiry_time"]:
         db_otp_set_status(user["user_id"], "expired")
-        raise HTTPException(400, detail="OTP expired. Please request a new one.")
-    if rec["otp_code"] != data.otp_code:
-        raise HTTPException(400, detail="Incorrect OTP. Please try again.")
+        raise HTTPException(400, detail="OTP expired.")
+    if rec["otp_code"] != data.otp_code: raise HTTPException(400, detail="Incorrect OTP.")
     conn = get_db()
     try:
         cur = conn.cursor()
-        cur.execute("UPDATE USERS SET password=? WHERE user_id=?",
-                    hash_pw(data.new_password), user["user_id"])
+        cur.execute("UPDATE users SET password=%s WHERE user_id=%s",
+                    (hash_pw(data.new_password), user["user_id"]))
         conn.commit()
     finally:
         conn.close()
     db_otp_set_status(user["user_id"], "verified")
     db_log(user["user_id"], "reset_password")
-    return {"message": "Password updated successfully. You can now log in with your new password."}
+    return {"message":"Password updated successfully."}
 
-# ── Admin helpers ─────────────────────────────────────────────────
+# ── Admin ─────────────────────────────────────────────────────────
 def require_admin(token: str) -> dict:
     rec = sessions_db.get(token)
-    if not rec:
-        raise HTTPException(401, detail="Invalid token")
+    if not rec: raise HTTPException(401, detail="Invalid token")
     if datetime.utcnow() > rec["expires"]:
-        del sessions_db[token]
-        raise HTTPException(401, detail="Session expired")
+        del sessions_db[token]; raise HTTPException(401, detail="Session expired")
     conn = get_db()
     try:
         cur = conn.cursor()
-        cur.execute("SELECT user_id,username,is_admin FROM USERS WHERE user_id=?", rec["user_id"])
+        cur.execute("SELECT user_id,username,is_admin FROM users WHERE user_id=%s", (rec["user_id"],))
         r = cur.fetchone()
-        if not r or not r[2]:
-            raise HTTPException(403, detail="Admin access required")
-        return {"user_id": r[0], "username": r[1]}
+        if not r or not r["is_admin"]: raise HTTPException(403, detail="Admin access required")
+        return {"user_id":r["user_id"],"username":r["username"]}
     finally:
         conn.close()
 
-# ── Admin routes ──────────────────────────────────────────────────
 @app.get("/admin/stats")
 def admin_stats(token: str):
     require_admin(token)
     conn = get_db()
     try:
         cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM USERS WHERE is_admin=0"); total_users = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM CODE_SUBMISSIONS"); total_sub = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM FLOWCHARTS"); total_fc = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM EXPLANATIONS"); total_exp = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM CODE_SUBMISSIONS WHERE language='python'"); py_count = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM CODE_SUBMISSIONS WHERE language='javascript'"); js_count = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM USERS WHERE created_at >= DATEADD(day,-7,GETUTCDATE()) AND is_admin=0")
-        new_week = cur.fetchone()[0]
-        cur.execute("SELECT COALESCE(SUM(download_count),0) FROM EXPLANATIONS"); total_downloads = cur.fetchone()[0]
+        def count(q): cur.execute(q); return cur.fetchone()[0]
         return {
-            "total_users": total_users,
-            "total_submissions": total_sub,
-            "total_flowcharts": total_fc,
-            "total_explanations": total_exp,
-            "python_submissions": py_count,
-            "javascript_submissions": js_count,
-            "total_downloads": total_downloads,
-            "new_users_this_week": new_week
+            "total_users":             count("SELECT COUNT(*) FROM users WHERE is_admin=false"),
+            "total_submissions":       count("SELECT COUNT(*) FROM code_submissions"),
+            "total_flowcharts":        count("SELECT COUNT(*) FROM flowcharts"),
+            "total_explanations":      count("SELECT COUNT(*) FROM explanations"),
+            "python_submissions":      count("SELECT COUNT(*) FROM code_submissions WHERE language='python'"),
+            "javascript_submissions":  count("SELECT COUNT(*) FROM code_submissions WHERE language='javascript'"),
+            "new_users_this_week":     count("SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '7 days' AND is_admin=false"),
+            "total_downloads":         count("SELECT COALESCE(SUM(download_count),0) FROM explanations"),
         }
     finally:
         conn.close()
@@ -620,21 +501,19 @@ def admin_get_users(token: str, page: int = 1, limit: int = 20):
         cur.execute("""
             SELECT u.user_id, u.username, u.mobile_no, u.created_at,
                    COUNT(cs.code_id) AS submission_count
-            FROM USERS u
-            LEFT JOIN CODE_SUBMISSIONS cs ON cs.user_id = u.user_id
-            WHERE u.is_admin = 0
+            FROM users u
+            LEFT JOIN code_submissions cs ON cs.user_id = u.user_id
+            WHERE u.is_admin = false
             GROUP BY u.user_id, u.username, u.mobile_no, u.created_at
             ORDER BY u.created_at DESC
-            OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
-        """, offset, limit)
+            LIMIT %s OFFSET %s
+        """, (limit, offset))
         rows = cur.fetchall()
-        cur.execute("SELECT COUNT(*) FROM USERS WHERE is_admin=0")
+        cur.execute("SELECT COUNT(*) FROM users WHERE is_admin=false")
         total = cur.fetchone()[0]
-        return {
-            "users": [{"user_id":r[0],"username":r[1],"mobile_no":r[2],
-                       "created_at":str(r[3]),"submission_count":r[4]} for r in rows],
-            "total": total, "page": page, "limit": limit
-        }
+        return {"users":[{"user_id":r["user_id"],"username":r["username"],"mobile_no":r["mobile_no"],
+                          "created_at":str(r["created_at"]),"submission_count":r["submission_count"]} for r in rows],
+                "total":total,"page":page,"limit":limit}
     finally:
         conn.close()
 
@@ -644,9 +523,9 @@ def admin_delete_user(user_id: int, token: str):
     conn = get_db()
     try:
         cur = conn.cursor()
-        cur.execute("DELETE FROM USERS WHERE user_id=? AND is_admin=0", user_id)
+        cur.execute("DELETE FROM users WHERE user_id=%s AND is_admin=false", (user_id,))
         conn.commit()
-        return {"message": f"User {user_id} deleted"}
+        return {"message":f"User {user_id} deleted"}
     finally:
         conn.close()
 
@@ -659,20 +538,20 @@ def admin_get_submissions(token: str, page: int = 1, limit: int = 20):
         cur = conn.cursor()
         cur.execute("""
             SELECT cs.code_id, u.username, cs.language, cs.upload_time,
-                   LEN(cs.source_code) AS code_length
-            FROM CODE_SUBMISSIONS cs
-            JOIN USERS u ON u.user_id = cs.user_id
+                   LENGTH(cs.source_code) AS code_length
+            FROM code_submissions cs
+            JOIN users u ON u.user_id = cs.user_id
             ORDER BY cs.upload_time DESC
-            OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
-        """, offset, limit)
+            LIMIT %s OFFSET %s
+        """, (limit, offset))
         rows = cur.fetchall()
-        return {"submissions": [{"code_id":r[0],"username":r[1],"language":r[2],
-                                  "upload_time":str(r[3]),"code_length":r[4]} for r in rows]}
+        return {"submissions":[{"code_id":r["code_id"],"username":r["username"],"language":r["language"],
+                                "upload_time":str(r["upload_time"]),"code_length":r["code_length"]} for r in rows]}
     finally:
         conn.close()
 
 # ══════════════════════════════════════════════════════════════════
-# FLOWCHART ENGINE (unchanged)
+# FLOWCHART ENGINE
 # ══════════════════════════════════════════════════════════════════
 NODE_COLORS={
     "start":{"bg":"#0f172a","border":"#38bdf8"},"end":{"bg":"#0f172a","border":"#f43f5e"},
@@ -750,212 +629,227 @@ def parse_statements(stmts,nodes,edges,parent_id,x,y,depth=0):
         elif isinstance(stmt,ast.ExceptHandler):
             exc=safe_unparse(stmt.type) if stmt.type else "Exception"
             label=f"except {exc}"+(f" as {stmt.name}" if stmt.name else ""); ck="except"; body=stmt.body
-        elif isinstance(stmt,ast.Raise): label=f"raise {safe_unparse(stmt.exc)}" if stmt.exc else "raise"; ck="raise"
-        elif isinstance(stmt,ast.With): label=f"with {', '.join(safe_unparse(it.context_expr) for it in stmt.items)}"; ck="with"; body=stmt.body
-        elif isinstance(stmt,ast.Delete): label="del "+", ".join(safe_unparse(t) for t in stmt.targets)
-        elif isinstance(stmt,ast.Pass): label="pass"
-        elif isinstance(stmt,ast.Break): label="⟵ break"; ck="for"
-        elif isinstance(stmt,ast.Continue): label="↺ continue"; ck="for"
-        elif isinstance(stmt,ast.Global): label="global "+", ".join(stmt.names)
-        elif isinstance(stmt,ast.Nonlocal): label="nonlocal "+", ".join(stmt.names)
-        elif isinstance(stmt,ast.Assert): label=f"assert {safe_unparse(stmt.test)}"; ck="try"
+        elif isinstance(stmt,ast.With):
+            items=", ".join(safe_unparse(w.context_expr)+(f" as {safe_unparse(w.optional_vars)}" if w.optional_vars else "") for w in stmt.items)
+            label=f"with {items}"; ck="with"; body=stmt.body
+        elif isinstance(stmt,ast.Raise):
+            label=f"raise {safe_unparse(stmt.exc) if stmt.exc else ''}"; ck="raise"
+        elif isinstance(stmt,ast.Delete): label=f"del {', '.join(safe_unparse(t) for t in stmt.targets)}"; ck="assign"
+        elif isinstance(stmt,ast.Assert): label=f"assert {safe_unparse(stmt.test)}"; ck="default"
         elif isinstance(stmt,ast.Expr):
-            if isinstance(stmt.value,ast.Call):
-                func=stmt.value.func
-                fname=func.id if isinstance(func,ast.Name) else (func.attr if isinstance(func,ast.Attribute) else "")
-                args=", ".join(safe_unparse(a) for a in stmt.value.args)
-                label=f"{fname}({args})"; ck="print" if fname in("print","input") else "call"
-            else: label=safe_unparse(stmt); ck="call"
+            v=stmt.value
+            if isinstance(v,ast.Call):
+                fname=""
+                if isinstance(v.func,ast.Name): fname=v.func.id
+                elif isinstance(v.func,ast.Attribute): fname=f"{safe_unparse(v.func.value)}.{v.func.attr}"
+                args=", ".join(safe_unparse(a) for a in v.args[:3])
+                if fname in("print","console.log"): label=f"print({args})"; ck="print"
+                else: label=f"{fname}({args})"; ck="call"
+            else: label=safe_unparse(v)
         else: label=type(stmt).__name__
-        nodes.append(make_node(node_id,label,ck,x+dx,y+i*130))
-        edges.append(make_edge(prev,node_id,color=NODE_COLORS.get(ck,NODE_COLORS["default"])["border"]))
-        prev=node_id; cy=y+i*130+130
-        if body:
-            last=parse_statements(body,nodes,edges,node_id,x+80,cy,depth+1)
-            prev=last or node_id
+        if not label: label=type(stmt).__name__
+        n=make_node(node_id,label[:60],ck,300+dx,y+i*110)
+        nodes.append(n)
+        lbl="Yes" if (prev==parent_id and ck in("if","elif","for","while") and i==0) else ""
+        edges.append(make_edge(prev,node_id,lbl,"#34d399" if lbl=="Yes" else "#4a90b8"))
+        prev=node_id
+        ny=y+(i+1)*110
+        if body: prev=parse_statements(body,nodes,edges,node_id,x+60,ny,depth+1) or prev
         if orelse:
-            if len(orelse)==1 and isinstance(orelse[0],ast.If):
-                eid=nid(); es=orelse[0]
-                nodes.append(make_node(eid,f"elif {safe_unparse(es.test)}","elif",x+dx+280,y+i*130))
-                edges.append(make_edge(node_id,eid,label="elif",color=NODE_COLORS["elif"]["border"],dashed=True))
-                if es.body: parse_statements(es.body,nodes,edges,eid,x+360,cy,depth+2)
-            else:
-                eid=nid(); nodes.append(make_node(eid,"else","else",x+dx+280,y+i*130))
-                edges.append(make_edge(node_id,eid,label="else",color=NODE_COLORS["else"]["border"],dashed=True))
-                parse_statements(orelse,nodes,edges,eid,x+360,cy,depth+2)
-        for h in handlers: parse_statements([h],nodes,edges,node_id,x+80,cy,depth+1)
-        if finalbody:
-            fid=nid(); fy=cy+130
-            nodes.append(make_node(fid,"finally","try",x+dx,fy))
-            edges.append(make_edge(node_id,fid,color=NODE_COLORS["try"]["border"]))
-            parse_statements(finalbody,nodes,edges,fid,x+80,fy+130,depth+1); prev=fid
+            else_id=nid(); en=make_node(else_id,"else","else",300+dx+200,y+i*110)
+            nodes.append(en); edges.append(make_edge(node_id,else_id,"No","#f87171"))
+            parse_statements(orelse,nodes,edges,else_id,x+260,ny,depth+1)
+        if handlers:
+            for h in handlers:
+                if isinstance(h,ast.ExceptHandler):
+                    exc=safe_unparse(h.type) if h.type else "Exception"
+                    hlabel=f"except {exc}"+(f" as {h.name}" if h.name else "")
+                    hid=nid(); hn=make_node(hid,hlabel,"except",300+dx+200,y+i*110)
+                    nodes.append(hn); edges.append(make_edge(node_id,hid,"","#f87171",dashed=True))
+                    if h.body: parse_statements(h.body,nodes,edges,hid,x+260,ny,depth+1)
     return prev
 
-def plain_english_explanation(code,tree):
-    functions=[n for n in ast.walk(tree) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef))]
+def build_graph_from_ast(code: str):
+    _ctr[0]=0; nodes=[]; edges=[]
+    tree=ast.parse(code)
+    sid=nid()
+    nodes.append({"id":sid,"type":"input","data":{"label":"▶  START"},"position":{"x":300,"y":0},
+                  "style":{"background":"#0f172a","color":"#fff","border":"2px solid #38bdf8",
+                           "borderRadius":"50px","padding":"12px 28px","fontWeight":"bold","fontSize":"14px",
+                           "textAlign":"center","minWidth":"140px","boxShadow":"0 0 24px #38bdf888",
+                           "fontFamily":"'Fira Code',monospace"}})
+    last=parse_statements(tree.body,nodes,edges,sid,300,110)
+    eid=nid()
+    nodes.append({"id":eid,"type":"output","data":{"label":"■  END"},"position":{"x":300,"y":len(nodes)*110+110},
+                  "style":{"background":"#0f172a","color":"#fff","border":"2px solid #f43f5e",
+                           "borderRadius":"50px","padding":"12px 28px","fontWeight":"bold","fontSize":"14px",
+                           "textAlign":"center","minWidth":"140px","boxShadow":"0 0 24px #f43f5e88",
+                           "fontFamily":"'Fira Code',monospace"}})
+    edges.append(make_edge(last,eid,"","#f43f5e"))
+    return nodes,edges
+
+def parse_js_to_graph(code: str):
+    _ctr[0]=0; nodes=[]; edges=[]
+    lines=code.splitlines()
+    start_id=nid()
+    nodes.append({"id":start_id,"type":"input","data":{"label":"▶  START"},"position":{"x":300,"y":0},
+                  "style":{"background":"#0f172a","color":"#fff","border":"2px solid #38bdf8",
+                           "borderRadius":"50px","padding":"12px 28px","fontWeight":"bold","fontSize":"14px",
+                           "textAlign":"center","minWidth":"140px","boxShadow":"0 0 24px #38bdf888",
+                           "fontFamily":"'Fira Code',monospace"}})
+    prev_id=start_id; y=130
+    for line in lines:
+        stripped=line.strip()
+        if not stripped or stripped.startswith("//"): continue
+        node_id=nid(); label=stripped[:60]+("…" if len(stripped)>60 else "")
+        color="#64748b"; bg="#1e293b"; shape="default"
+        if re.match(r"^(if|else if)\s*\(",stripped):
+            color="#fca5a5"; bg="#7f1d1d"; shape="diamond"; label=re.sub(r"\s*\{.*","",stripped)
+        elif stripped.startswith("else"):
+            color="#93c5fd"; bg="#1e3a5f"; shape="diamond"; label="else"
+        elif re.match(r"^(for|while)\s*\(",stripped):
+            color="#34d399"; bg="#064e3b"; shape="diamond"; label=re.sub(r"\s*\{.*","",stripped)
+        elif re.match(r"^(function|const\s+\w+\s*=\s*(async\s*)?\(|let\s+\w+\s*=\s*function)",stripped):
+            color="#a78bfa"; bg="#4c1d95"; label=re.sub(r"\{.*","",stripped).strip()
+        elif re.match(r"^return\s",stripped):
+            color="#fb923c"; bg="#7c2d12"
+        elif re.match(r"^(console\.log|console\.error|alert)\s*\(",stripped):
+            color="#60a5fa"; bg="#1e3a5f"; shape="parallelogram"
+        elif re.match(r"^(const|let|var)\s",stripped):
+            color="#38bdf8"; bg="#0c4a6e"
+        elif stripped in ["}", "};", "});"]:
+            continue
+        if shape=="diamond":
+            nodes.append({"id":node_id,"type":"diamond","data":{"label":label,"color":color,"bg":bg},"position":{"x":300,"y":y}})
+        elif shape=="parallelogram":
+            nodes.append({"id":node_id,"type":"parallelogram","data":{"label":label,"color":color,"bg":bg},"position":{"x":300,"y":y}})
+        else:
+            nodes.append({"id":node_id,"data":{"label":label},"position":{"x":300,"y":y},
+                          "style":{"background":bg,"color":"#fff","border":f"2px solid {color}",
+                                   "borderRadius":"8px","padding":"10px 16px","fontSize":"12px",
+                                   "textAlign":"center","minWidth":"180px","maxWidth":"280px",
+                                   "fontFamily":"'Fira Code',monospace","boxShadow":f"0 0 12px {color}44"}})
+        edges.append(make_edge(prev_id,node_id,color=color))
+        prev_id=node_id; y+=130
+    end_id=nid()
+    nodes.append({"id":end_id,"type":"output","data":{"label":"■  END"},"position":{"x":300,"y":y},
+                  "style":{"background":"#0f172a","color":"#fff","border":"2px solid #f43f5e",
+                           "borderRadius":"50px","padding":"12px 28px","fontWeight":"bold","fontSize":"14px",
+                           "textAlign":"center","minWidth":"140px","boxShadow":"0 0 24px #f43f5e88",
+                           "fontFamily":"'Fira Code',monospace"}})
+    edges.append(make_edge(prev_id,end_id,"","#f43f5e"))
+    return nodes,edges
+
+def explain_code(code: str, language: str) -> list:
+    parts=[]
+    if language=="javascript":
+        lines=[l.strip() for l in code.splitlines() if l.strip() and not l.strip().startswith("//")]
+        parts.append({"title":"📝 What this code does","body":f"This JavaScript program has {len(lines)} statements."})
+        return parts
+    try: tree=ast.parse(code)
+    except: return [{"title":"⚠️ Parse Error","body":"Could not analyse this code."}]
+    funcs=[n for n in ast.walk(tree) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef))]
     classes=[n for n in ast.walk(tree) if isinstance(n,ast.ClassDef)]
-    imports=[n for n in ast.walk(tree) if isinstance(n,(ast.Import,ast.ImportFrom))]
     loops=[n for n in ast.walk(tree) if isinstance(n,(ast.For,ast.While))]
     conditions=[n for n in ast.walk(tree) if isinstance(n,ast.If)]
-    prints=[n for n in ast.walk(tree) if isinstance(n,ast.Expr) and isinstance(getattr(n,"value",None),ast.Call)
-            and isinstance(getattr(n.value,"func",None),ast.Name) and n.value.func.id=="print"]
-    inputs_=[n for n in ast.walk(tree) if isinstance(n,ast.Call)
-             and isinstance(getattr(n,"func",None),ast.Name) and n.func.id=="input"]
+    imports=[n for n in ast.walk(tree) if isinstance(n,(ast.Import,ast.ImportFrom))]
     inames=[]
     for n in imports:
         if isinstance(n,ast.Import): inames+=[a.name for a in n.names]
-        else: inames+=[n.module or ""]
-    inames=[i for i in dict.fromkeys(inames) if i]
-    parts=[]
-    intro=["This program"]
-    if inputs_: intro.append("asks the user to enter some information,")
-    if classes: intro.append(f"defines {'a class' if len(classes)==1 else 'classes'} called {' and '.join(c.name for c in classes)},")
-    if functions and not classes: intro.append(f"defines reusable tasks called {' and '.join(f.name for f in functions[:3])},")
-    if loops:
-        fl=[n for n in loops if isinstance(n,ast.For)]; wl=[n for n in loops if isinstance(n,ast.While)]
-        ld=[]
-        if fl: ld.append(f"repeats steps {len(fl)} time(s) using a for-loop")
-        if wl: ld.append(f"keeps looping until a condition is false")
-        intro.append(", ".join(ld)+",")
-    if conditions: intro.append(f"makes {'a decision' if len(conditions)==1 else str(len(conditions))+' decisions'} based on conditions,")
-    intro.append("and displays results on the screen." if prints else "and produces a result.")
-    what=re.sub(r",\s+and"," and"," ".join(intro))
-    parts.append({"title":"🔍 What it does","body":what})
+        elif n.module: inames.append(n.module)
+    summary=[]
+    if funcs: summary.append(f"{len(funcs)} function(s)")
+    if classes: summary.append(f"{len(classes)} class(es)")
+    if loops: summary.append(f"{len(loops)} loop(s)")
+    if conditions: summary.append(f"{len(conditions)} condition(s)")
+    if inames: summary.append(f"uses: {', '.join(inames[:3])}")
+    parts.append({"title":"📝 What this code does","body":"This Python program has "+(", ".join(summary) if summary else "basic statements")+"."})
     steps=[]; sn=1
-    for node in tree.body:
-        if isinstance(node,(ast.Import,ast.ImportFrom)) and sn==1:
-            steps.append(f"Step {sn}: It loads tools it needs ({', '.join(inames[:4])}) to help with the work."); sn+=1; break
-    for node in tree.body:
-        if isinstance(node,ast.ClassDef):
-            methods=[n.name for n in ast.walk(node) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef))]
-            attrs=[]
-            for n in ast.walk(node):
-                if isinstance(n,ast.Assign):
-                    for t in n.targets:
-                        if isinstance(t,ast.Attribute) and isinstance(t.value,ast.Name) and t.value.id=="self": attrs.append(t.attr)
-            d=f'Step {sn}: It creates a blueprint called "{node.name}"'
-            if attrs: d+=f", which stores: {', '.join(dict.fromkeys(attrs[:3]))}"
-            rm=[m for m in methods if not m.startswith("_")]
-            if rm: d+=f". Its abilities are: {', '.join(rm[:5])}"
-            steps.append(d+"."); sn+=1
-        elif isinstance(node,(ast.FunctionDef,ast.AsyncFunctionDef)):
-            args=[a.arg for a in node.args.args if a.arg!="self"]
-            fl2=[n for n in ast.walk(node) if isinstance(n,(ast.For,ast.While))]
-            fi=[n for n in ast.walk(node) if isinstance(n,ast.If)]
-            fr=[n for n in ast.walk(node) if isinstance(n,ast.Return)]
-            d=f'Step {sn}: It defines a task called "{node.name}"'
-            if args: d+=f" that works with {', '.join(args[:3])}"
-            beh=[]
-            if fl2: beh.append("goes through items one by one")
-            if fi: beh.append("checks conditions and decides what to do")
-            if fr: beh.append("gives back a result when done")
-            if beh: d+=". It "+", and ".join(beh)
-            steps.append(d+"."); sn+=1
-        elif isinstance(node,ast.Assign):
-            tgt=safe_unparse(node.targets[0]); val=safe_unparse(node.value)
-            steps.append(f'Step {sn}: It stores "{val}" in a variable called "{tgt}".'); sn+=1
-        elif isinstance(node,ast.If):
-            steps.append(f'Step {sn}: It checks whether "{safe_unparse(node.test)}" is true'
-                         +(" and does something if yes" if node.body else "")
-                         +(", otherwise does something different" if node.orelse else "")+"."); sn+=1
+    for node in ast.walk(tree):
+        if isinstance(node,ast.FunctionDef):
+            args=", ".join(a.arg for a in node.args.args)
+            steps.append(f'Step {sn}: It defines a function called "{node.name}" that takes ({args}).'); sn+=1
+        elif isinstance(node,ast.ClassDef):
+            steps.append(f'Step {sn}: It creates a class called "{node.name}".'); sn+=1
         elif isinstance(node,ast.For):
-            steps.append(f'Step {sn}: It goes through each item in "{safe_unparse(node.iter)}", calling each one "{safe_unparse(node.target)}", and does something for each.'); sn+=1
+            steps.append(f'Step {sn}: It loops through {safe_unparse(node.iter)}.'); sn+=1
         elif isinstance(node,ast.While):
-            steps.append(f'Step {sn}: It keeps doing something over and over as long as "{safe_unparse(node.test)}" is true.'); sn+=1
-        elif isinstance(node,ast.Expr) and isinstance(getattr(node,"value",None),ast.Call):
+            steps.append(f'Step {sn}: It keeps repeating while {safe_unparse(node.test)} is true.'); sn+=1
+        elif isinstance(node,ast.If):
+            steps.append(f'Step {sn}: It checks: {safe_unparse(node.test)}.'); sn+=1
+        elif isinstance(node,ast.Expr) and isinstance(node.value,ast.Call):
             func=node.value.func
             fname=func.id if isinstance(func,ast.Name) else getattr(func,"attr","")
             args=", ".join(safe_unparse(a) for a in node.value.args[:2])
-            if fname=="print": steps.append(f'Step {sn}: It shows "{args}" on the screen.')
-            elif fname=="input": steps.append(f'Step {sn}: It waits for the user to type something in.')
-            else: steps.append(f'Step {sn}: It runs the "{fname}" task.')
-            sn+=1
+            if fname=="print": steps.append(f'Step {sn}: It shows "{args}" on screen.'); sn+=1
+            elif fname=="input": steps.append(f'Step {sn}: It waits for user input.'); sn+=1
+            else: steps.append(f'Step {sn}: It calls "{fname}".'); sn+=1
         elif isinstance(node,ast.Try):
-            steps.append(f'Step {sn}: It carefully tries something that might fail, and handles errors gracefully instead of crashing.'); sn+=1
+            steps.append(f'Step {sn}: It tries something that might fail and handles errors.'); sn+=1
     if steps: parts.append({"title":"📋 How it works","body":"\n".join(steps)})
     concepts=[]
-    if classes: concepts.append("Object-Oriented Programming (classes and objects)")
-    if loops: concepts.append("Loops (repeating steps automatically)")
-    if conditions: concepts.append("Conditionals (making decisions with if/else)")
-    if any(isinstance(n,ast.Try) for n in ast.walk(tree)): concepts.append("Error Handling (try/except)")
-    if any(isinstance(n,ast.ListComp) for n in ast.walk(tree)): concepts.append("List Comprehensions")
-    if inames: concepts.append(f"External Libraries ({', '.join(inames[:3])})")
+    if classes: concepts.append("Object-Oriented Programming")
+    if loops: concepts.append("Loops")
+    if conditions: concepts.append("Conditionals (if/else)")
+    if any(isinstance(n,ast.Try) for n in ast.walk(tree)): concepts.append("Error Handling")
+    if inames: concepts.append(f"Libraries: {', '.join(inames[:3])}")
     if concepts: parts.append({"title":"💡 Key concepts","body":"\n".join(f"• {c}" for c in concepts)})
-    if prints:
-        pargs=[", ".join(safe_unparse(a) for a in n.value.args) for n in prints[:3] if isinstance(n.value,ast.Call)]
-        if pargs: parts.append({"title":"📤 What you will see","body":f"The program prints: {' | '.join(pargs)}"})
-    elif inputs_:
-        parts.append({"title":"📤 What happens","body":"The program waits for you to type something, then processes it and shows a result."})
     return parts
 
 def scan_input_calls(code: str) -> list:
-    try: tree = ast.parse(code)
+    try: tree=ast.parse(code)
     except: return []
-    inputs = []
+    inputs=[]
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            func = node.func
-            fname = func.id if isinstance(func, ast.Name) else (func.attr if isinstance(func, ast.Attribute) else "")
-            if fname == "input":
-                prompt = ""
+        if isinstance(node,ast.Call):
+            func=node.func
+            fname=func.id if isinstance(func,ast.Name) else (func.attr if isinstance(func,ast.Attribute) else "")
+            if fname=="input":
+                prompt=""
                 if node.args:
-                    try: prompt = ast.literal_eval(node.args[0])
-                    except: prompt = safe_unparse(node.args[0])
-                inputs.append({"index": len(inputs), "prompt": str(prompt)})
+                    try: prompt=ast.literal_eval(node.args[0])
+                    except: prompt=safe_unparse(node.args[0])
+                inputs.append({"index":len(inputs),"prompt":str(prompt)})
     return inputs
 
-def run_code_safe(code: str, user_inputs: list = []) -> dict:
-    import math as _math, random as _random, re as _re
-    import datetime as _dt, json as _json
-    import collections as _col, itertools as _it, functools as _ft, string as _str
-    out = io.StringIO(); err = io.StringIO()
-    old_out, old_err = sys.stdout, sys.stderr
-    status = "success"; error = None
-    start = datetime.utcnow()
-    queue = list(user_inputs); prompts_hit = []
+def run_code_safe(code: str, user_inputs: list=[]) -> dict:
+    import math as _math,random as _random,re as _re
+    import datetime as _dt,json as _json
+    import collections as _col,itertools as _it,functools as _ft,string as _str
+    out=io.StringIO(); err=io.StringIO()
+    old_out,old_err=sys.stdout,sys.stderr
+    status="success"; error=None
+    start=datetime.utcnow()
+    queue=list(user_inputs); prompts_hit=[]
     def mock_input(prompt=""):
         prompts_hit.append(str(prompt))
-        val = queue.pop(0) if queue else ""
+        val=queue.pop(0) if queue else ""
         sys.stdout.write(f"{prompt}{val}\n")
         return str(val)
-    safe_builtins = {
-        "print":print,"input":mock_input,
-        "int":int,"float":float,"str":str,"bool":bool,"complex":complex,
-        "bytes":bytes,"bytearray":bytearray,
-        "list":list,"dict":dict,"tuple":tuple,"set":set,"frozenset":frozenset,
-        "range":range,"len":len,"type":type,"enumerate":enumerate,
-        "zip":zip,"map":map,"filter":filter,"reversed":reversed,"sorted":sorted,
-        "iter":iter,"next":next,"sum":sum,"min":min,"max":max,"abs":abs,"round":round,
-        "divmod":divmod,"pow":pow,"hash":hash,"repr":repr,"hex":hex,"oct":oct,
-        "bin":bin,"chr":chr,"ord":ord,"format":format,"any":any,"all":all,
-        "callable":callable,"id":id,"isinstance":isinstance,"issubclass":issubclass,
-        "hasattr":hasattr,"getattr":getattr,"setattr":setattr,"delattr":delattr,
-        "vars":vars,"dir":dir,
-        "Exception":Exception,"ValueError":ValueError,"TypeError":TypeError,
-        "KeyError":KeyError,"IndexError":IndexError,"AttributeError":AttributeError,
-        "NameError":NameError,"ZeroDivisionError":ZeroDivisionError,
-        "StopIteration":StopIteration,"RuntimeError":RuntimeError,
-        "NotImplementedError":NotImplementedError,"OSError":OSError,
-        "ArithmeticError":ArithmeticError,"OverflowError":OverflowError,
-        "AssertionError":AssertionError,"RecursionError":RecursionError,
-        "True":True,"False":False,"None":None,
-        "__name__":"__main__","__build_class__":__build_class__,
-    }
-    safe_globals = {
-        "__builtins__": safe_builtins,
-        "math":_math,"random":_random,"re":_re,"datetime":_dt,
-        "json":_json,"collections":_col,"itertools":_it,"functools":_ft,"string":_str,
-    }
+    safe_builtins={"print":print,"input":mock_input,"int":int,"float":float,"str":str,"bool":bool,
+        "complex":complex,"bytes":bytes,"bytearray":bytearray,"list":list,"dict":dict,"tuple":tuple,
+        "set":set,"frozenset":frozenset,"range":range,"len":len,"type":type,"enumerate":enumerate,
+        "zip":zip,"map":map,"filter":filter,"reversed":reversed,"sorted":sorted,"iter":iter,"next":next,
+        "sum":sum,"min":min,"max":max,"abs":abs,"round":round,"divmod":divmod,"pow":pow,"hash":hash,
+        "repr":repr,"hex":hex,"oct":oct,"bin":bin,"chr":chr,"ord":ord,"format":format,"any":any,"all":all,
+        "callable":callable,"id":id,"isinstance":isinstance,"issubclass":issubclass,"hasattr":hasattr,
+        "getattr":getattr,"setattr":setattr,"delattr":delattr,"vars":vars,"dir":dir,
+        "Exception":Exception,"ValueError":ValueError,"TypeError":TypeError,"KeyError":KeyError,
+        "IndexError":IndexError,"AttributeError":AttributeError,"NameError":NameError,
+        "ZeroDivisionError":ZeroDivisionError,"StopIteration":StopIteration,"RuntimeError":RuntimeError,
+        "NotImplementedError":NotImplementedError,"OSError":OSError,"ArithmeticError":ArithmeticError,
+        "OverflowError":OverflowError,"AssertionError":AssertionError,"RecursionError":RecursionError,
+        "True":True,"False":False,"None":None,"__name__":"__main__","__build_class__":__build_class__}
+    safe_globals={"__builtins__":safe_builtins,"math":_math,"random":_random,"re":_re,"datetime":_dt,
+                  "json":_json,"collections":_col,"itertools":_it,"functools":_ft,"string":_str}
     try:
-        sys.stdout = out; sys.stderr = err
-        exec(compile(code,"<ragsy>","exec"), safe_globals)
+        sys.stdout=out; sys.stderr=err
+        exec(compile(code,"<ragsy>","exec"),safe_globals)
     except SystemExit: status="exited"
     except RecursionError:
-        status="error"; error="RecursionError: maximum recursion depth exceeded."
-        print(error,file=err)
+        status="error"; error="RecursionError: maximum recursion depth exceeded."; print(error,file=err)
     except MemoryError:
-        status="error"; error="MemoryError: program used too much memory."
-        print(error,file=err)
+        status="error"; error="MemoryError: too much memory."; print(error,file=err)
     except Exception:
         status="error"; tb=traceback.format_exc()
         tb=re.sub(r'  File ".*?main\.py".*\n.*\n','',tb)
@@ -967,435 +861,199 @@ def run_code_safe(code: str, user_inputs: list = []) -> dict:
     return {"status":status,"stdout":out.getvalue(),"stderr":err.getvalue(),
             "elapsed_ms":elapsed,"error":error,"prompts_hit":prompts_hit}
 
-def run_js_safe(code: str, user_inputs: list = []) -> dict:
-    """Run JavaScript via Node.js with 5-second timeout."""
+def run_js_safe(code: str, user_inputs: list=[]) -> dict:
     try:
-        subprocess.run(["node", "--version"], capture_output=True, timeout=3)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return {"status":"error","stdout":"","stderr":"Node.js not found. Please install Node.js to run JavaScript.",
+        subprocess.run(["node","--version"],capture_output=True,timeout=3)
+    except (FileNotFoundError,subprocess.TimeoutExpired):
+        return {"status":"error","stdout":"","stderr":"Node.js not found.",
                 "elapsed_ms":0,"error":"Node.js not installed","prompts_hit":[]}
-
-    # Inject input helper + user code
-    header = (
-        "const __inputs = " + json.dumps([str(x) for x in user_inputs]) + ";\n"
-        "let __inputIdx = 0;\n"
-        "const prompt = (msg='') => { const v = __inputs[__inputIdx++] ?? ''; if(msg) process.stdout.write(String(msg)); return String(v); };\n"
-        "const input  = (msg='') => prompt(msg);\n"
-        "const readline = { question: (q, cb) => { const v = __inputs[__inputIdx++] ?? ''; cb(String(v)); } };\n"
+    header=(
+        "const __inputs="+json.dumps([str(x) for x in user_inputs])+";\n"
+        "let __inputIdx=0;\n"
+        "const prompt=(msg='')=>{const v=__inputs[__inputIdx++]??'';if(msg)process.stdout.write(String(msg));return String(v);};\n"
+        "const input=(msg='')=>prompt(msg);\n"
     )
-    full_code = header + "\n" + code
-
-    with tempfile.NamedTemporaryFile(suffix=".js", delete=False, mode='w', encoding='utf-8') as f:
-        f.write(full_code)
-        fname = f.name
-
-    start = datetime.utcnow()
+    full_code=header+"\n"+code
+    with tempfile.NamedTemporaryFile(suffix=".js",delete=False,mode='w',encoding='utf-8') as f:
+        f.write(full_code); fname=f.name
+    start=datetime.utcnow()
     try:
-        result = subprocess.run(["node", fname], capture_output=True, text=True, timeout=5, encoding='utf-8')
-        elapsed = int((datetime.utcnow() - start).total_seconds() * 1000)
-        stderr = result.stderr.strip()
-        # Clean up internal node paths from error messages for both Linux and Windows
+        result=subprocess.run(["node",fname],capture_output=True,text=True,timeout=5,encoding='utf-8')
+        elapsed=int((datetime.utcnow()-start).total_seconds()*1000)
+        stderr=result.stderr.strip()
         if stderr:
-            stderr = re.sub(r"at .+\n?", "", stderr).strip()
-            stderr = re.sub(r"[A-Za-z]?:?[/\\]tmp[/\\][^\s:]+:", "line ", stderr)
-            stderr = re.sub(r"[A-Za-z]:\\Users\\[^\\]+\\AppData\\Local\\Temp\\[^\s:]+:", "line ", stderr)
-            stderr = re.sub(r"\n{2,}", "\n", stderr).strip()
-        return {
-            "status": "error" if result.returncode != 0 else "success",
-            "stdout": result.stdout,
-            "stderr": stderr,
-            "elapsed_ms": elapsed,
-            "error": stderr if result.returncode != 0 else None,
-            "prompts_hit": []
-        }
+            stderr=re.sub(r"at .+\n?","",stderr).strip()
+            stderr=re.sub(r"[A-Za-z]?:?[/\\]tmp[/\\][^\s:]+:","line ",stderr)
+            stderr=re.sub(r"[A-Za-z]:\\Users\\[^\\]+\\AppData\\Local\\Temp\\[^\s:]+:","line ",stderr)
+            stderr=re.sub(r"\n{2,}","\n",stderr).strip()
+        return {"status":"error" if result.returncode!=0 else "success","stdout":result.stdout,
+                "stderr":stderr,"elapsed_ms":elapsed,"error":stderr if result.returncode!=0 else None,"prompts_hit":[]}
     except subprocess.TimeoutExpired:
-        return {"status":"error","stdout":"","stderr":"Timeout: execution exceeded 5 seconds.",
+        return {"status":"error","stdout":"","stderr":"Timeout: exceeded 5 seconds.",
                 "elapsed_ms":5000,"error":"Timeout","prompts_hit":[]}
     finally:
         try: os.unlink(fname)
         except: pass
 
 # ══════════════════════════════════════════════════════════════════
-# CODE ROUTES — saving results to SQL Server DB
+# CODE ROUTES
 # ══════════════════════════════════════════════════════════════════
 @app.post("/scan-inputs")
 async def scan_inputs(request: RunRequest):
-    code = request.code.strip()
+    code=request.code.strip()
     if not code: return {"inputs":[]}
-    if request.language == "javascript":
-        return {"inputs":[]}   # JS uses prompt() inline; no pre-scan needed
-    return {"inputs": scan_input_calls(code)}
+    if request.language=="javascript": return {"inputs":[]}
+    return {"inputs":scan_input_calls(code)}
 
 @app.post("/run")
-async def run_code(request: RunRequest, token: str = ""):
-    code = request.code.strip()
-    lang = request.language or "python"
-    if not code: raise HTTPException(400, detail="Code cannot be empty")
-
-    if lang == "javascript":
-        # JS does NOT use Python's ast.parse — run directly via Node.js
-        result = run_js_safe(code, request.user_inputs or [])
+async def run_code(request: RunRequest, token: str=""):
+    code=request.code.strip(); lang=request.language or "python"
+    if not code: raise HTTPException(400,detail="Code cannot be empty")
+    if lang=="javascript":
+        result=run_js_safe(code,request.user_inputs or [])
     else:
-        # Python — validate syntax first with AST
         try: ast.parse(code)
         except SyntaxError as e:
             return {"status":"error","stdout":"","stderr":f"SyntaxError at line {e.lineno}: {e.msg}",
                     "elapsed_ms":0,"error":f"SyntaxError: {e.msg}","prompts_hit":[]}
-        result = run_code_safe(code, request.user_inputs or [])
-
-    rec = sessions_db.get(token)
-    if rec:
-        db_log(rec["user_id"], f"run_{lang}")
+        result=run_code_safe(code,request.user_inputs or [])
+    rec=sessions_db.get(token)
+    if rec: db_log(rec["user_id"],f"run_{lang}")
     return result
 
-# ══════════════════════════════════════════════════════════════════
-# JAVASCRIPT FLOWCHART PARSER
-# ══════════════════════════════════════════════════════════════════
-def parse_js_to_graph(code: str):
-    """Parse JavaScript code into flowchart nodes and edges."""
-    _ctr[0] = 0
-    nodes = []
-    edges = []
-    lines = code.splitlines()
-
-    # Start node
-    start_id = nid()
-    nodes.append({"id": start_id, "type": "input",
-        "data": {"label": "▶  START"},
-        "position": {"x": 300, "y": 0},
-        "style": {"background":"#0f172a","color":"#fff","border":"2px solid #38bdf8",
-                  "borderRadius":"50px","padding":"12px 28px","fontWeight":"bold",
-                  "fontSize":"14px","textAlign":"center","minWidth":"140px",
-                  "boxShadow":"0 0 24px #38bdf888","fontFamily":"'Fira Code',monospace"}})
-
-    prev_id = start_id
-    y = 130
-
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("//"):
-            continue
-
-        node_id = nid()
-        label = stripped[:60] + ("…" if len(stripped) > 60 else "")
-
-        # Determine node type and color
-        if re.match(r"^(if|else if)\s*\(", stripped):
-            color = "#fca5a5"; bg = "#7f1d1d"; shape = "diamond"
-            label = re.sub(r"\s*\{.*", "", stripped)
-        elif stripped.startswith("else"):
-            color = "#93c5fd"; bg = "#1e3a5f"; shape = "diamond"
-            label = "else"
-        elif re.match(r"^(for|while)\s*\(", stripped):
-            color = "#34d399"; bg = "#064e3b"; shape = "diamond"
-            label = re.sub(r"\s*\{.*", "", stripped)
-        elif re.match(r"^(function|const\s+\w+\s*=\s*(async\s*)?\(|let\s+\w+\s*=\s*function)", stripped):
-            color = "#a78bfa"; bg = "#4c1d95"; shape = "default"
-            label = re.sub(r"\{.*", "", stripped).strip()
-        elif re.match(r"^return\s", stripped):
-            color = "#fb923c"; bg = "#7c2d12"; shape = "default"
-        elif re.match(r"^(console\.log|console\.error|console\.warn|alert)\s*\(", stripped):
-            color = "#60a5fa"; bg = "#1e3a5f"; shape = "parallelogram"
-        elif re.match(r"^(const|let|var)\s", stripped):
-            color = "#38bdf8"; bg = "#0c4a6e"; shape = "default"
-        elif stripped in ["}", "};", "});"]:
-            continue
-        else:
-            color = "#64748b"; bg = "#1e293b"; shape = "default"
-
-        nodes.append({"id": node_id,
-            "data": {"label": label},
-            "position": {"x": 300, "y": y},
-            "style": {"background": bg, "color": "#fff",
-                      "border": f"2px solid {color}",
-                      "borderRadius": "8px", "padding": "10px 16px",
-                      "fontSize": "12px", "textAlign": "center",
-                      "minWidth": "180px", "maxWidth": "280px",
-                      "fontFamily": "'Fira Code',monospace",
-                      "boxShadow": f"0 0 12px {color}44"}})
-        edges.append(make_edge(prev_id, node_id, color=color))
-        prev_id = node_id
-        y += 130
-
-    # End node
-    end_id = nid()
-    nodes.append({"id": end_id, "type": "output",
-        "data": {"label": "■  END"},
-        "position": {"x": 300, "y": y},
-        "style": {"background":"#0f172a","color":"#fff","border":"2px solid #f43f5e",
-                  "borderRadius":"50px","padding":"12px 28px","fontWeight":"bold",
-                  "fontSize":"14px","textAlign":"center","minWidth":"140px",
-                  "boxShadow":"0 0 24px #f43f5e88","fontFamily":"'Fira Code',monospace"}})
-    edges.append(make_edge(prev_id, end_id, color="#f43f5e"))
-    return nodes, edges
-
-
-def js_plain_explanation(code: str) -> list:
-    """Generate plain English explanation for JavaScript code."""
-    lines = code.splitlines()
-    steps = []
-    sn = 1
-    for line in lines:
-        s = line.strip()
-        if not s or s.startswith("//"): continue
-        if re.match(r"^function\s+(\w+)", s):
-            m = re.match(r"^function\s+(\w+)", s)
-            steps.append(f"Step {sn}: Defines a function called '{m.group(1)}'.")
-        elif re.match(r"^(const|let|var)\s+(\w+)\s*=", s):
-            m = re.match(r"^(const|let|var)\s+(\w+)\s*=\s*(.+)", s)
-            if m: steps.append(f"Step {sn}: Creates a variable '{m.group(2)}' with value {m.group(3).rstrip(';')[:40]}.")
-        elif re.match(r"^if\s*\(", s):
-            cond = re.sub(r"^if\s*\((.+)\)\s*\{?$", r"\1", s)
-            steps.append(f"Step {sn}: Checks condition — {cond[:50]}.")
-        elif re.match(r"^for\s*\(", s):
-            steps.append(f"Step {sn}: Starts a loop to repeat a block of code.")
-        elif re.match(r"^while\s*\(", s):
-            steps.append(f"Step {sn}: Repeats while condition is true.")
-        elif re.match(r"^console\.log\(", s):
-            steps.append(f"Step {sn}: Prints output to the console.")
-        elif re.match(r"^return\s", s):
-            steps.append(f"Step {sn}: Returns a value from the function.")
-        else:
-            continue
-        sn += 1
-    if not steps:
-        steps = ["This JavaScript program executes the given statements in sequence."]
-    return steps
-
-
 @app.post("/visualize")
-async def visualize_code(request: CodeRequest, token: str = ""):
-    _ctr[0]=0; nodes=[]; edges=[]; code=request.code.strip()
-    lang = (request.language or "python").lower()
-    if not code: raise HTTPException(400, detail="Code cannot be empty")
+async def visualize(request: CodeRequest, token: str=""):
+    code=request.code.strip(); lang=request.language or "python"
+    if not code: raise HTTPException(400,detail="Code cannot be empty")
+    try:
+        if lang=="javascript":
+            nodes,edges=parse_js_to_graph(code)
+        else:
+            nodes,edges=build_graph_from_ast(code)
+        explanation=explain_code(code,lang)
+        rec=sessions_db.get(token)
+        if rec:
+            try:
+                cid=db_submission_save(rec["user_id"],code,lang)
+                db_flowchart_save(cid,json.dumps({"nodes":nodes,"edges":edges}))
+                db_explanation_save(cid,json.dumps(explanation))
+                db_log(rec["user_id"],"visualize")
+            except Exception as e:
+                print(f"[DB SAVE WARN] {e}")
+        return {"nodes":nodes,"edges":edges,"explanation":explanation,
+                "stats":{"node_count":len(nodes),"edge_count":len(edges),"language":lang}}
+    except SyntaxError as e:
+        raise HTTPException(422,detail=f"SyntaxError at line {e.lineno}: {e.msg}")
+    except Exception as e:
+        raise HTTPException(500,detail=f"Visualisation error: {e}")
 
-    rec = sessions_db.get(token)
-    uid = rec["user_id"] if rec else None
-
-    # ── Parse based on language ───────────────────────────────────
-    if lang == "javascript":
-        # For JS: use a simple token-based flowchart (AST not available)
-        tree = None
-        try:
-            nodes, edges = parse_js_to_graph(code)
-        except Exception as e:
-            raise HTTPException(400, detail=f"JS parse error: {e}")
-    else:
-        try: tree = ast.parse(code)
-        except SyntaxError as e: raise HTTPException(400, detail=f"SyntaxError line {e.lineno}: {e.msg}")
-        except Exception as e: raise HTTPException(400, detail=str(e))
-
-    # Save submission to DB
-    code_id = None
-    if uid:
-        try:
-            code_id = db_submission_save(uid, code, lang)
-        except Exception as e:
-            print(f"[DB WARNING] submission save failed: {e}")
-
-    if lang == "javascript":
-        # nodes/edges already built by parse_js_to_graph
-        explanation = js_plain_explanation(code)
-    else:
-        start_id=nid()
-        nodes.append({"id":start_id,"type":"input","data":{"label":"▶  START"},"position":{"x":300,"y":0},
-            "style":{"background":"#0f172a","color":"#fff","border":"2px solid #38bdf8","borderRadius":"50px",
-                     "padding":"12px 28px","fontWeight":"bold","fontSize":"14px","textAlign":"center",
-                     "minWidth":"140px","boxShadow":"0 0 24px #38bdf888","fontFamily":"'Fira Code',monospace"}})
-        last_id=parse_statements(tree.body,nodes,edges,start_id,300,130) if tree.body else start_id
-        end_y=max(n["position"]["y"] for n in nodes)+150; end_id=nid()
-        nodes.append({"id":end_id,"type":"output","data":{"label":"■  END"},"position":{"x":300,"y":end_y},
-            "style":{"background":"#0f172a","color":"#fff","border":"2px solid #f43f5e","borderRadius":"50px",
-                     "padding":"12px 28px","fontWeight":"bold","fontSize":"14px","textAlign":"center",
-                     "minWidth":"140px","boxShadow":"0 0 24px #f43f5e88","fontFamily":"'Fira Code',monospace"}})
-        edges.append(make_edge(last_id,end_id,color="#f43f5e"))
-        explanation = plain_english_explanation(code, tree)
-
-    # Save flowchart + explanation to DB
-    if uid and code_id:
-        try:
-            db_flowchart_save(code_id, json.dumps({"nodes":nodes,"edges":edges}))
-            db_explanation_save(code_id, json.dumps(explanation))
-            db_log(uid, f"visualize_{lang}")
-        except Exception as e:
-            print(f"[DB WARNING] flowchart/explanation save failed: {e}")
-
-    lines=len(code.splitlines())
-    return {"code_id":code_id,"nodes":nodes,"edges":edges,"explanation":explanation,
-            "stats":{"node_count":len(nodes),"edge_count":len(edges),"lines_parsed":lines}}
+@app.get("/activities")
+def get_activities(token: str, limit: int=10):
+    user=user_by_token(token); uid=user["user_id"]
+    try:
+        conn=get_db(); cur=conn.cursor()
+        cur.execute("""
+            SELECT cs.code_id, cs.source_code, cs.language, cs.upload_time,
+                   f.generated_time, e.download_count, e.file_path
+            FROM code_submissions cs
+            LEFT JOIN flowcharts f    ON f.code_id=cs.code_id
+            LEFT JOIN explanations e  ON e.code_id=cs.code_id
+            WHERE cs.user_id=%s
+            ORDER BY cs.upload_time DESC
+            LIMIT %s
+        """, (uid, limit))
+        rows=cur.fetchall(); conn.close()
+        activities=[]
+        for r in rows:
+            expl=[]
+            try:
+                if r["file_path"]: expl=json.loads(r["file_path"])
+            except: pass
+            full_code=decrypt_code(r["source_code"])
+            activities.append({
+                "code_id":       r["code_id"],
+                "source_code":   full_code[:200]+("..." if len(full_code)>200 else ""),
+                "source_code_full": full_code,
+                "language":      r["language"],
+                "upload_time":   str(r["upload_time"]),
+                "flowchart_time":str(r["generated_time"]) if r["generated_time"] else None,
+                "downloads":     r["download_count"] or 0,
+                "explanation":   expl,
+            })
+        return {"activities":activities,"count":len(activities)}
+    except Exception as e:
+        raise HTTPException(500,detail=f"DB error: {e}")
 
 @app.get("/submissions")
 def get_submissions(token: str):
-    user = user_by_token(token)
-    try:
-        return {"submissions": db_submissions_by_user(user["user_id"])}
-    except Exception as e:
-        raise HTTPException(500, detail=f"DB error: {e}")
+    user=user_by_token(token)
+    return {"submissions":db_submissions_by_user(user["user_id"])}
 
-
-# ══════════════════════════════════════════════════════════════════
-# POST /flowchart/download — records download in FLOWCHARTS table
-# ══════════════════════════════════════════════════════════════════
-@app.post("/flowchart/download")
-def record_flowchart_download(code_id: int, token: str = ""):
-    """
-    Increments download_count in EXPLANATIONS table.
-    Updates FLOWCHARTS.generated_time to record the download timestamp.
-    Logs to USER_ACTIONS_LOG and REPORTS.
-    """
-    rec = sessions_db.get(token)
-    uid = rec["user_id"] if rec else None
-    try:
-        conn = get_db()
-        cur  = conn.cursor()
-        # Increment download_count in EXPLANATIONS
-        cur.execute(
-            "UPDATE EXPLANATIONS SET download_count = ISNULL(download_count,0) + 1 WHERE code_id = ?",
-            code_id)
-        # Record download time in FLOWCHARTS (reuse generated_time column)
-        cur.execute(
-            "UPDATE FLOWCHARTS SET generated_time = ? WHERE code_id = ?",
-            datetime.utcnow(), code_id)
-        conn.commit()
-        conn.close()
-        if uid:
-            db_log(uid, "download_flowchart")
-        return {"message": "Download recorded", "code_id": code_id, "status": "ok"}
-    except Exception as e:
-        print(f"[DB WARNING] download record failed: {e}")
-        # Don't fail the user — download already happened
-        return {"message": "Download noted", "code_id": code_id, "status": "db_warn"}
-
-# ══════════════════════════════════════════════════════════════════
-# GET /activities — recent submissions + actions for a user
-# ══════════════════════════════════════════════════════════════════
-@app.get("/activities")
-def get_activities(token: str, limit: int = 10):
-    """
-    Returns recent activity for the logged-in user.
-    Joins CODE_SUBMISSIONS + FLOWCHARTS + EXPLANATIONS.
-    """
-    user = user_by_token(token)
-    uid  = user["user_id"]
-    try:
-        conn = get_db()
-        cur  = conn.cursor()
-        # Recent code submissions with flowchart/explanation info
-        cur.execute("""
-            SELECT
-                cs.code_id,
-                cs.source_code,
-                cs.language,
-                cs.upload_time,
-                f.generated_time  AS flowchart_time,
-                e.download_count  AS downloads,
-                e.file_path       AS explanation
-            FROM CODE_SUBMISSIONS cs
-            LEFT JOIN FLOWCHARTS f    ON f.code_id = cs.code_id
-            LEFT JOIN EXPLANATIONS e  ON e.code_id = cs.code_id
-            WHERE cs.user_id = ?
-            ORDER BY cs.upload_time DESC
-            OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
-        """, uid, limit)
-        rows = cur.fetchall()
-        conn.close()
-        activities = []
-        for r in rows:
-            expl = []
-            try:
-                if r[6]: expl = json.loads(r[6])
-            except: pass
-            full_code = decrypt_code(r[1])
-            activities.append({
-                "code_id":        r[0],
-                "source_code":    full_code[:200] + ("..." if len(full_code) > 200 else ""),
-                "source_code_full": full_code,
-                "language":       r[2],
-                "upload_time":    str(r[3]),
-                "flowchart_time": str(r[4]) if r[4] else None,
-                "downloads":      r[5] or 0,
-                "explanation":    expl,
-            })
-        return {"activities": activities, "count": len(activities)}
-    except Exception as e:
-        raise HTTPException(500, detail=f"DB error: {e}")
-
-# ── Delete account ────────────────────────────────────────────────
 @app.delete("/auth/account")
 def delete_account(token: str):
-    user = user_by_token(token)
-    uid = user["user_id"]
-    conn = get_db()
+    user=user_by_token(token); uid=user["user_id"]
+    conn=get_db()
     try:
-        cur = conn.cursor()
-        # Delete in FK order
-        cur.execute("DELETE FROM OTP_VERIFICATION WHERE user_id=?", uid)
-        cur.execute("DELETE FROM USER_ACTIONS_LOG WHERE user_id=?", uid)
-        cur.execute("DELETE FROM REPORTS WHERE user_id=?", uid)
-        # Submissions, flowcharts, explanations
-        cur.execute("""
-            DELETE e FROM EXPLANATIONS e
-            JOIN CODE_SUBMISSIONS cs ON cs.code_id = e.code_id
-            WHERE cs.user_id=?""", uid)
-        cur.execute("""
-            DELETE f FROM FLOWCHARTS f
-            JOIN CODE_SUBMISSIONS cs ON cs.code_id = f.code_id
-            WHERE cs.user_id=?""", uid)
-        cur.execute("DELETE FROM CODE_SUBMISSIONS WHERE user_id=?", uid)
-        cur.execute("DELETE FROM USERS WHERE user_id=?", uid)
+        cur=conn.cursor()
+        cur.execute("DELETE FROM otp_verification WHERE user_id=%s",(uid,))
+        cur.execute("DELETE FROM user_actions_log WHERE user_id=%s",(uid,))
+        cur.execute("DELETE FROM reports WHERE user_id=%s",(uid,))
+        cur.execute("""DELETE FROM explanations WHERE code_id IN
+                       (SELECT code_id FROM code_submissions WHERE user_id=%s)""",(uid,))
+        cur.execute("""DELETE FROM flowcharts WHERE code_id IN
+                       (SELECT code_id FROM code_submissions WHERE user_id=%s)""",(uid,))
+        cur.execute("DELETE FROM code_submissions WHERE user_id=%s",(uid,))
+        cur.execute("DELETE FROM users WHERE user_id=%s",(uid,))
         conn.commit()
     finally:
         conn.close()
-    sessions_db.pop(token, None)
-    return {"message": "Account and all associated data deleted."}
+    sessions_db.pop(token,None)
+    return {"message":"Account deleted."}
 
 # ══════════════════════════════════════════════════════════════════
-# TASKS — Beginner Learning Task Lists
+# TASKS
 # ══════════════════════════════════════════════════════════════════
-PYTHON_TASKS = [
+PYTHON_TASKS=[
     {"id":1,"title":"Print Hello World","description":"Write a program that prints 'Hello, World!' to the screen.","hint":"Use the print() function. Example: print('your text here')","expected_output":"Hello, World!","time_seconds":120,"difficulty":"Beginner","starter_code":"# Write your first Python program\n"},
-    {"id":2,"title":"Add Two Numbers","description":"Create variables num1=10 and num2=20, add them and print the result.","hint":"Use the + operator. Store the result in a variable called 'result' and print it.","expected_output":"30","time_seconds":180,"difficulty":"Beginner","starter_code":"# Create two number variables and add them\nnum1 = 10\nnum2 = 20\n# Add and print the result\n"},
-    {"id":3,"title":"Even or Odd","description":"Write a program that checks if the number 7 is even or odd and prints 'Even' or 'Odd'.","hint":"Use the modulus operator %. If num % 2 == 0, it is even, otherwise odd.","expected_output":"Odd","time_seconds":240,"difficulty":"Beginner","starter_code":"num = 7\n# Check if num is even or odd\n"},
-    {"id":4,"title":"Count 1 to 5","description":"Use a for loop to print numbers from 1 to 5, each on a new line.","hint":"Use range(1, 6) inside a for loop. range(start, end) goes up to but not including end.","expected_output":"1\n2\n3\n4\n5","time_seconds":240,"difficulty":"Beginner","starter_code":"# Use a for loop to count from 1 to 5\n"},
-    {"id":5,"title":"Simple Calculator Function","description":"Write a function called add(a, b) that returns the sum of two numbers. Call it with 4 and 6 and print the result.","hint":"Define using def add(a, b): and use return a + b inside. Then call print(add(4, 6)).","expected_output":"10","time_seconds":300,"difficulty":"Beginner","starter_code":"# Define your add function here\n\n# Call the function and print the result\n"},
-    {"id":6,"title":"Find the Largest Number","description":"Given a list numbers = [3, 7, 1, 9, 4], print the largest number without using max().","hint":"Use a loop and a variable to track the largest number seen so far.","expected_output":"9","time_seconds":360,"difficulty":"Intermediate","starter_code":"numbers = [3, 7, 1, 9, 4]\n# Find the largest number using a loop\n"},
-    {"id":7,"title":"Reverse a String","description":"Write a program that reverses the string 'Ragsy' and prints it.","hint":"You can use slicing: text[::-1] reverses any string.","expected_output":"ysgar","time_seconds":240,"difficulty":"Intermediate","starter_code":"text = 'Ragsy'\n# Reverse the string and print it\n"},
-    {"id":8,"title":"FizzBuzz","description":"Print numbers 1 to 20. For multiples of 3 print 'Fizz', for multiples of 5 print 'Buzz', for both print 'FizzBuzz'.","hint":"Use if/elif/else inside a for loop. Check % 15 == 0 first for FizzBuzz.","expected_output":"1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz\n16\n17\nFizz\n19\nBuzz","time_seconds":480,"difficulty":"Intermediate","starter_code":"# FizzBuzz from 1 to 20\nfor i in range(1, 21):\n    # Your code here\n    pass\n"},
-    {"id":9,"title":"Count Vowels","description":"Write a function count_vowels(text) that counts and returns the number of vowels in a string. Test with 'Hello World'.","hint":"Loop through each character and check if it is in 'aeiouAEIOU'.","expected_output":"3","time_seconds":420,"difficulty":"Intermediate","starter_code":"def count_vowels(text):\n    # Count vowels in text\n    pass\n\nprint(count_vowels('Hello World'))\n"},
-    {"id":10,"title":"Fibonacci Sequence","description":"Print the first 8 numbers of the Fibonacci sequence (0 1 1 2 3 5 8 13).","hint":"Each number is the sum of the two before it. Start with a=0 and b=1 in a loop.","expected_output":"0\n1\n1\n2\n3\n5\n8\n13","time_seconds":480,"difficulty":"Advanced","starter_code":"# Print first 8 Fibonacci numbers\na, b = 0, 1\n# Use a loop 8 times\n"},
+    {"id":2,"title":"Add Two Numbers","description":"Create variables num1=10 and num2=20, add them and print the result.","hint":"Use the + operator. Store the result in a variable called 'result' and print it.","expected_output":"30","time_seconds":180,"difficulty":"Beginner","starter_code":"num1 = 10\nnum2 = 20\n# Add and print the result\n"},
+    {"id":3,"title":"Even or Odd","description":"Write a program that checks if the number 7 is even or odd and prints 'Even' or 'Odd'.","hint":"Use the modulus operator %. If num % 2 == 0, it is even.","expected_output":"Odd","time_seconds":240,"difficulty":"Beginner","starter_code":"num = 7\n# Check if num is even or odd\n"},
+    {"id":4,"title":"Count 1 to 5","description":"Use a for loop to print numbers from 1 to 5, each on a new line.","hint":"Use range(1, 6) inside a for loop.","expected_output":"1\n2\n3\n4\n5","time_seconds":240,"difficulty":"Beginner","starter_code":"# Use a for loop to count from 1 to 5\n"},
+    {"id":5,"title":"Simple Calculator Function","description":"Write a function called add(a, b) that returns the sum. Call it with 4 and 6 and print the result.","hint":"Define using def add(a, b): and use return a + b. Then call print(add(4, 6)).","expected_output":"10","time_seconds":300,"difficulty":"Beginner","starter_code":"# Define your add function here\n\n# Call the function and print the result\n"},
+    {"id":6,"title":"Find the Largest Number","description":"Given numbers = [3, 7, 1, 9, 4], print the largest without using max().","hint":"Use a loop and a variable to track the largest number.","expected_output":"9","time_seconds":360,"difficulty":"Intermediate","starter_code":"numbers = [3, 7, 1, 9, 4]\n# Find the largest using a loop\n"},
+    {"id":7,"title":"Reverse a String","description":"Reverse the string 'Ragsy' and print it.","hint":"Use slicing: text[::-1] reverses any string.","expected_output":"ysgar","time_seconds":240,"difficulty":"Intermediate","starter_code":"text = 'Ragsy'\n# Reverse the string and print it\n"},
+    {"id":8,"title":"FizzBuzz","description":"Print numbers 1 to 20. Multiples of 3 → 'Fizz', of 5 → 'Buzz', both → 'FizzBuzz'.","hint":"Check % 15 == 0 first for FizzBuzz.","expected_output":"1\n2\nFizz\n4\nBuzz","time_seconds":480,"difficulty":"Intermediate","starter_code":"for i in range(1, 21):\n    pass\n"},
+    {"id":9,"title":"Count Vowels","description":"Write count_vowels(text) that returns the number of vowels. Test with 'Hello World'.","hint":"Loop through each character and check if it is in 'aeiouAEIOU'.","expected_output":"3","time_seconds":420,"difficulty":"Intermediate","starter_code":"def count_vowels(text):\n    pass\n\nprint(count_vowels('Hello World'))\n"},
+    {"id":10,"title":"Fibonacci Sequence","description":"Print the first 8 Fibonacci numbers (0 1 1 2 3 5 8 13).","hint":"Start with a=0 and b=1. Each iteration update [a,b]=[b,a+b].","expected_output":"0\n1\n1\n2\n3\n5\n8\n13","time_seconds":480,"difficulty":"Advanced","starter_code":"a, b = 0, 1\n# Use a loop 8 times\n"},
 ]
 
-JAVASCRIPT_TASKS = [
-    {"id":1,"title":"Print Hello World","description":"Write a program that prints 'Hello, World!' to the console.","hint":"Use console.log() function. Example: console.log('your text here')","expected_output":"Hello, World!","time_seconds":120,"difficulty":"Beginner","starter_code":"// Write your first JavaScript program\n"},
-    {"id":2,"title":"Add Two Numbers","description":"Create variables num1=10 and num2=20, add them and print the result.","hint":"Use let or const to declare variables. Use + to add them and console.log() to print.","expected_output":"30","time_seconds":180,"difficulty":"Beginner","starter_code":"// Create two variables and add them\nlet num1 = 10;\nlet num2 = 20;\n// Add and print the result\n"},
-    {"id":3,"title":"Even or Odd","description":"Check if the number 7 is even or odd and print 'Even' or 'Odd'.","hint":"Use the % operator. If num % 2 === 0 it is even, otherwise odd.","expected_output":"Odd","time_seconds":240,"difficulty":"Beginner","starter_code":"let num = 7;\n// Check if num is even or odd\n"},
-    {"id":4,"title":"Count 1 to 5","description":"Use a for loop to print numbers from 1 to 5, each on a new line.","hint":"Use for(let i = 1; i <= 5; i++) and console.log(i) inside.","expected_output":"1\n2\n3\n4\n5","time_seconds":240,"difficulty":"Beginner","starter_code":"// Use a for loop to count from 1 to 5\n"},
-    {"id":5,"title":"Simple Function","description":"Write a function called add(a, b) that returns the sum. Call it with 4 and 6 and print the result.","hint":"Use function add(a, b) { return a + b; } then console.log(add(4, 6)).","expected_output":"10","time_seconds":300,"difficulty":"Beginner","starter_code":"// Define your add function here\n\n// Call the function and print the result\n"},
-    {"id":6,"title":"Find the Largest Number","description":"Given an array numbers = [3, 7, 1, 9, 4], print the largest number without using Math.max().","hint":"Use a for loop and a variable 'largest' to track the maximum value.","expected_output":"9","time_seconds":360,"difficulty":"Intermediate","starter_code":"let numbers = [3, 7, 1, 9, 4];\n// Find the largest number using a loop\n"},
-    {"id":7,"title":"Reverse a String","description":"Reverse the string 'Ragsy' and print it.","hint":"Convert to array with split(''), reverse with reverse(), join back with join('').","expected_output":"ysgar","time_seconds":240,"difficulty":"Intermediate","starter_code":"let text = 'Ragsy';\n// Reverse the string and print it\n"},
-    {"id":8,"title":"FizzBuzz","description":"Print numbers 1 to 20. Multiples of 3 print 'Fizz', multiples of 5 print 'Buzz', both print 'FizzBuzz'.","hint":"Use if/else if/else inside a for loop. Check % 15 === 0 first.","expected_output":"1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz\n16\n17\nFizz\n19\nBuzz","time_seconds":480,"difficulty":"Intermediate","starter_code":"// FizzBuzz from 1 to 20\nfor(let i = 1; i <= 20; i++) {\n    // Your code here\n}\n"},
-    {"id":9,"title":"Count Vowels","description":"Write a function countVowels(text) that returns the number of vowels. Test with 'Hello World'.","hint":"Loop through each character and check if it is in 'aeiouAEIOU' using includes().","expected_output":"3","time_seconds":420,"difficulty":"Intermediate","starter_code":"function countVowels(text) {\n    // Count vowels in text\n}\n\nconsole.log(countVowels('Hello World'));\n"},
-    {"id":10,"title":"Fibonacci Sequence","description":"Print the first 8 numbers of the Fibonacci sequence (0 1 1 2 3 5 8 13).","hint":"Start with a=0 and b=1. Each iteration: print a, then update [a,b] = [b, a+b].","expected_output":"0\n1\n1\n2\n3\n5\n8\n13","time_seconds":480,"difficulty":"Advanced","starter_code":"// Print first 8 Fibonacci numbers\nlet a = 0, b = 1;\n// Use a loop 8 times\n"},
+JAVASCRIPT_TASKS=[
+    {"id":1,"title":"Print Hello World","description":"Write a program that prints 'Hello, World!' to the console.","hint":"Use console.log('Hello, World!')","expected_output":"Hello, World!","time_seconds":120,"difficulty":"Beginner","starter_code":"// Write your first JavaScript program\n"},
+    {"id":2,"title":"Add Two Numbers","description":"Create num1=10 and num2=20, add and print the result.","hint":"Use let, + operator and console.log().","expected_output":"30","time_seconds":180,"difficulty":"Beginner","starter_code":"let num1 = 10;\nlet num2 = 20;\n// Add and print\n"},
+    {"id":3,"title":"Even or Odd","description":"Check if 7 is even or odd and print 'Even' or 'Odd'.","hint":"Use % operator. If num % 2 === 0 it is even.","expected_output":"Odd","time_seconds":240,"difficulty":"Beginner","starter_code":"let num = 7;\n// Check even or odd\n"},
+    {"id":4,"title":"Count 1 to 5","description":"Use a for loop to print numbers 1 to 5.","hint":"for(let i=1; i<=5; i++) { console.log(i); }","expected_output":"1\n2\n3\n4\n5","time_seconds":240,"difficulty":"Beginner","starter_code":"// Use a for loop\n"},
+    {"id":5,"title":"Simple Function","description":"Write add(a,b) returning the sum. Call with 4 and 6 and print.","hint":"function add(a,b){return a+b;} then console.log(add(4,6))","expected_output":"10","time_seconds":300,"difficulty":"Beginner","starter_code":"// Define add function\n\n// Call and print\n"},
+    {"id":6,"title":"Find the Largest Number","description":"Given [3,7,1,9,4], print the largest without Math.max().","hint":"Use a for loop and 'largest' variable.","expected_output":"9","time_seconds":360,"difficulty":"Intermediate","starter_code":"let numbers=[3,7,1,9,4];\n// Find largest with a loop\n"},
+    {"id":7,"title":"Reverse a String","description":"Reverse 'Ragsy' and print it.","hint":"split('').reverse().join('')","expected_output":"ysgar","time_seconds":240,"difficulty":"Intermediate","starter_code":"let text='Ragsy';\n// Reverse and print\n"},
+    {"id":8,"title":"FizzBuzz","description":"Print 1-20, Fizz for 3, Buzz for 5, FizzBuzz for both.","hint":"Check % 15 === 0 first.","expected_output":"1\n2\nFizz\n4\nBuzz","time_seconds":480,"difficulty":"Intermediate","starter_code":"for(let i=1;i<=20;i++){\n    // your code\n}\n"},
+    {"id":9,"title":"Count Vowels","description":"Write countVowels(text) returning vowel count. Test 'Hello World'.","hint":"Loop each char and use includes() with 'aeiouAEIOU'.","expected_output":"3","time_seconds":420,"difficulty":"Intermediate","starter_code":"function countVowels(text){\n}\nconsole.log(countVowels('Hello World'));\n"},
+    {"id":10,"title":"Fibonacci Sequence","description":"Print first 8 Fibonacci numbers.","hint":"Start a=0,b=1. Each iteration: print a, [a,b]=[b,a+b].","expected_output":"0\n1\n1\n2\n3\n5\n8\n13","time_seconds":480,"difficulty":"Advanced","starter_code":"let a=0,b=1;\n// Loop 8 times\n"},
 ]
 
 @app.get("/tasks")
-def get_tasks(language: str = "python"):
-    if language.lower() == "javascript":
-        return {"tasks": JAVASCRIPT_TASKS, "language": "javascript"}
-    return {"tasks": PYTHON_TASKS, "language": "python"}
+def get_tasks(language: str="python"):
+    if language.lower()=="javascript":
+        return {"tasks":JAVASCRIPT_TASKS,"language":"javascript"}
+    return {"tasks":PYTHON_TASKS,"language":"python"}
 
 @app.post("/tasks/hint")
 async def get_task_hint(request: dict):
-    task_id = request.get("task_id")
-    language = request.get("language", "python")
-    tasks = JAVASCRIPT_TASKS if language == "javascript" else PYTHON_TASKS
-    task = next((t for t in tasks if t["id"] == task_id), None)
-    if not task:
-        raise HTTPException(404, detail="Task not found")
-    return {"hint": task["hint"], "starter_code": task["starter_code"]}
-
+    task_id=request.get("task_id"); language=request.get("language","python")
+    tasks=JAVASCRIPT_TASKS if language=="javascript" else PYTHON_TASKS
+    task=next((t for t in tasks if t["id"]==task_id),None)
+    if not task: raise HTTPException(404,detail="Task not found")
+    return {"hint":task["hint"],"starter_code":task["starter_code"]}
 
 if __name__=="__main__":
-    test_db_connection()   # prints DB status on startup
+    test_db_connection()
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app",host="0.0.0.0",port=int(os.getenv("PORT",8000)),reload=False)

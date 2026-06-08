@@ -53,7 +53,7 @@ async function applyDagreLayout(nodes, edges) {
 /* ══════════════════════════════════════════════════════════════
    API
 ══════════════════════════════════════════════════════════════ */
-const BASE = import.meta.env.VITE_API_URL || "";
+const BASE = import.meta.env.VITE_API_URL || "https://ragsy-backend.onrender.com";
 async function apiFetch(path, opts = {}) {
   const res = await fetch(`${BASE}${path}`, {
     headers: { "Content-Type": "application/json", ...(opts.headers||{}) },
